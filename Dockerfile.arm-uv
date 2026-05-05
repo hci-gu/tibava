@@ -1,0 +1,12 @@
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+# Runtime libraries needed by Python packages in this project on the slim image.
+# Wand requires ImageMagick's MagickWand shared library.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    imagemagick \
+    libmagickwand-6.q16-6 \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+  && rm -rf /var/lib/apt/lists/*

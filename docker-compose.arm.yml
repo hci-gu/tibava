@@ -1,0 +1,48 @@
+# ARM64 override: use a Python 3.12 uv image with needed Debian runtime libs,
+# and force uv to use the system interpreter. This prevents uv from trying to
+# download python-build-standalone from GitHub at container start.
+x-arm-uv-env: &arm_uv_env
+  UV_PYTHON_DOWNLOADS: never
+  UV_NO_MANAGED_PYTHON: "1"
+  UV_PYTHON: /usr/local/bin/python3.12
+
+services:
+  inference_ray:
+    image: tibava-arm-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.arm-uv
+    environment:
+      <<: *arm_uv_env
+      HF_HOME: /models
+      NUMBA_CACHE_DIR: /tmp
+    command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package inference_ray serve run inference_ray/deploy.yml
+
+  analyser:
+    image: tibava-arm-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.arm-uv
+    environment:
+      <<: *arm_uv_env
+    command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package analyser analyser/src/analyser/server.py -v -c analyser/config.yml
+
+  celery:
+    image: tibava-arm-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.arm-uv
+    environment:
+      <<: *arm_uv_env
+      TIBAVA_BACKEND_CONFIG: /app/backend/config.json
+    command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package backend celery -A tibava worker -l INFO
+
+  backend:
+    image: tibava-arm-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.arm-uv
+    environment:
+      <<: *arm_uv_env
+      TIBAVA_BACKEND_CONFIG: /app/backend/config.json
+    command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000

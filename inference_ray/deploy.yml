@@ -221,7 +221,7 @@ applications:
             uv:
               - scikit-learn==1.4.0
               - opencv-python-headless==4.9.0.80
-              - onnxruntime-gpu==1.17.0
+              - onnxruntime==1.17.0
               - onnx==1.15.0
   - name: insightface_video_detector_torch
     route_prefix: /insightface_video_detector_torch
@@ -296,7 +296,7 @@ applications:
             uv:
               - scikit-learn==1.4.0
               - opencv-python-headless==4.9.0.80
-              - onnxruntime-gpu==1.17.0
+              - onnxruntime==1.17.0
               - onnx==1.15.0
   - name: insightface_image_feature_extractor
     route_prefix: /insightface_image_feature_extractor
@@ -316,7 +316,7 @@ applications:
             uv:
               - scikit-learn==1.4.0
               - opencv-python-headless==4.9.0.80
-              - onnxruntime-gpu==1.17.0
+              - onnxruntime==1.17.0
               - onnx==1.15.0
   - name: min_max_norm
     route_prefix: /min_max_norm
@@ -560,7 +560,7 @@ applications:
             uv:
               - scikit-learn==1.4.0
               - opencv-python-headless==4.9.0.80
-              - onnxruntime-gpu==1.17.0
+              - onnxruntime==1.17.0
               - onnx==1.15.0
               - cuda-python==12.2.0
               - regex==2023.12.25
@@ -583,7 +583,7 @@ applications:
             uv:
               - scikit-learn==1.4.0
               - opencv-python-headless==4.9.0.80
-              - onnxruntime-gpu==1.17.0
+              - onnxruntime==1.17.0
               - onnx==1.15.0
               - cuda-python==12.2.0
               - regex==2023.12.25
@@ -607,7 +607,7 @@ applications:
             uv:
               - scikit-learn==1.4.0
               - opencv-python-headless==4.9.0.80
-              - onnxruntime-gpu==1.17.0
+              - onnxruntime==1.17.0
               - onnx==1.15.0
               - cuda-python==12.2.0
               - regex==2023.12.25
@@ -785,10 +785,9 @@ applications:
     import_path: inference_ray.main:app_builder
     runtime_env:
       uv:
-        - "--extra-index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/onnxruntime-cuda-12/pypi/simple/"
         - scikit-learn
         - opencv-python-headless
-        - onnxruntime-gpu==1.17.0
+        - onnxruntime==1.17.0
         - onnx
         - torch
         - torchvision

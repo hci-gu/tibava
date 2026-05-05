@@ -24,7 +24,10 @@ dependencies = [
     "imageio[ffmpeg,pyav]>=2.37.0",
     "librosa>=0.11.0",
     "onnx>=1.17.0",
-    "onnxruntime-gpu>=1.21.1",
+    # onnxruntime-gpu has no Linux ARM64/aarch64 wheels on PyPI.
+    # Use GPU runtime only on Linux x86_64; use CPU runtime on ARM64.
+    "onnxruntime-gpu>=1.21.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "onnxruntime>=1.21.1; sys_platform == 'linux' and platform_machine == 'aarch64'",
     "opencv-python-headless>=4.11.0.86",
     "qdrant-client>=1.13.2",
     "ray[serve,serve-grpc]==2.42.0",
