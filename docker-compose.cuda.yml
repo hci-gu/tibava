@@ -139,7 +139,7 @@ services:
 
     working_dir: /app/backend/src/backend/
     environment:
-      - TIBAVA_BACKEND_CONFIG=/app/backend/config.json
+      - TIBAVA_BACKEND_CONFIG=/app/backend/src/backend/config.json
     command: uv run --package backend celery -A tibava worker -l INFO
 
   backend:
@@ -181,7 +181,7 @@ services:
 
     working_dir: /app/
     environment:
-      - TIBAVA_BACKEND_CONFIG=/app/backend/config.json
+      - TIBAVA_BACKEND_CONFIG=/app/backend/src/backend/config.json
     command: uv run --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000
 
     depends_on:

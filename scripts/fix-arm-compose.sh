@@ -114,7 +114,7 @@ services:
       dockerfile: Dockerfile.arm-uv
     environment:
       <<: *arm_uv_env
-      TIBAVA_BACKEND_CONFIG: /app/backend/config.json
+      TIBAVA_BACKEND_CONFIG: /app/backend/src/backend/config.json
     command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package backend celery -A tibava worker -l INFO
 
   backend:
@@ -124,7 +124,7 @@ services:
       dockerfile: Dockerfile.arm-uv
     environment:
       <<: *arm_uv_env
-      TIBAVA_BACKEND_CONFIG: /app/backend/config.json
+      TIBAVA_BACKEND_CONFIG: /app/backend/src/backend/config.json
     command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000
 YAML
 
