@@ -2,15 +2,37 @@
     "secret_key": "default_secret",
     "force_script_name": "/",
     "allowed_hosts": [
-        "localhost"
+        "localhost",
+        "127.0.0.1",
+        "tactik-pc"
+    ],
+    "csrf_trusted_origins": [
+        "http://localhost",
+        "http://localhost:8000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8000",
+        "http://tactik-pc",
+        "http://tactik-pc:8000"
+    ],
+    "cors_allow_all_origins": false,
+    "cors_origin_allow_all": false,
+    "cors_allowed_origins": [
+        "http://localhost",
+        "http://localhost:8080",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8080",
+        "http://tactik-pc",
+        "http://tactik-pc:8080"
     ],
     "debug": false,
     "language_code": "en-us",
     "static_url": "/static/",
     "media_root": "/media/",
+    "media_base_url": "http://tactik-pc",
     "upload_root": "/upload/",
     "media_url": "/media/",
     "upload_url": "/upload/",
+    "thumbnail_url": "http://tactik-pc/thumbnails/",
     "grpc_host": "analyser",
     "grpc_port": "50051"
 }

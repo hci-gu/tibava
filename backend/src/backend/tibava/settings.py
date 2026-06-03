@@ -30,6 +30,7 @@ FORCE_SCRIPT_NAME = "/"
 ALLOWED_HOSTS = ["localhost"]
 CSRF_TRUSTED_ORIGINS = ["http://localhost", "https://localhost"]
 
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ORIGIN_ALLOW_ALL = True
 CORS_ALLOW_CREDENTIALS = True
 
@@ -186,6 +187,7 @@ except:
     pass
 
 MEDIA_URL = "/media/"
+MEDIA_BASE_URL = "http://localhost"
 THUMBNAIL_URL = "http://localhost/thumbnails/"
 
 # the last resolution will use for indexing
@@ -198,14 +200,20 @@ config_lut = {
     "secret_key": "SECRET_KEY",
     "force_script_name": "FORCE_SCRIPT_NAME",
     "allowed_hosts": "ALLOWED_HOSTS",
+    "csrf_trusted_origins": "CSRF_TRUSTED_ORIGINS",
+    "cors_allowed_origins": "CORS_ALLOWED_ORIGINS",
+    "cors_allow_all_origins": "CORS_ALLOW_ALL_ORIGINS",
+    "cors_origin_allow_all": "CORS_ORIGIN_ALLOW_ALL",
     "debug": "DEBUG",
     "language_code": "LANGUAGE_CODE",
     "static_url": "STATIC_URL",
     "media_root": "MEDIA_ROOT",
+    "media_base_url": "MEDIA_BASE_URL",
     "data_cache_root": "DATA_CACHE_ROOT",
     "upload_root": "UPLOAD_ROOT",
     "media_url": "MEDIA_URL",
     "upload_url": "UPLOAD_URL",
+    "thumbnail_url": "THUMBNAIL_URL",
     "grpc_host": "GRPC_HOST",
     "grpc_port": "GRPC_PORT",
     "image_resolutions": "IMAGE_RESOLUTIONS",
