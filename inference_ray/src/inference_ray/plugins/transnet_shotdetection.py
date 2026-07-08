@@ -7,6 +7,7 @@ from data import Shot, ShotsData, VideoData
 from data import DataManager, Data
 
 from typing import Callable, Optional, Dict
+from contextlib import nullcontext
 
 import numpy as np
 import logging
@@ -82,7 +83,12 @@ class TransnetShotdetection(
             # (131362, 27, 48, 3)
             self.update_callbacks(callbacks, progress=progress)
 
-            with torch.no_grad(), torch.cuda.amp.autocast():
+            autocast = (
+                torch.amp.autocast("cuda")
+                if str(self.device).startswith("cuda")
+                else nullcontext()
+            )
+            with torch.no_grad(), autocast:
                 raw_result = self.model(torch.from_numpy(inp).to(self.device))
             single_frame_pred = raw_result[0].cpu().detach().numpy()
             all_frames_pred = raw_result[1].cpu().detach().numpy()
@@ -133,12 +139,17 @@ class TransnetShotdetection(
     ) -> Dict[str, Data]:
         import torch
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        configured_device = self.config.get("model_device", "auto")
+        if configured_device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            device = configured_device
 
         if self.model is None:
             self.model = torch.jit.load(
                 self.model_path, map_location=torch.device(device)
             )
+            self.model.eval()
             self.device = device
 
         self.update_callbacks(callbacks, progress=0.0)

@@ -323,6 +323,12 @@ class OCRTextDetectorONNX(AnalyserPlugin):
             bboxes_list.append(box)
             scores_list.append(score)
 
+        if not bboxes_list:
+            return {
+                "boxes": np.empty((0, 4), dtype=np.float32),
+                "scores": np.empty((0,), dtype=np.float32),
+            }
+
         bboxes = np.vstack(bboxes_list)
         scores = np.vstack(scores_list)
         scores_ravel = scores.ravel()

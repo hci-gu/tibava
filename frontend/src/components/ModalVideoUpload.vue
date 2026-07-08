@@ -108,7 +108,7 @@ export default {
         this.file_valid = false;
         return 'File exceeds your maximum file size of ' + this.max_size_in_words;
       }
-      if (!file.name.endsWith(".mp4")) {
+      if (!file.name.toLowerCase().endsWith(".mp4")) {
         this.file_valid = false;
         return 'File is not in the .mp4 format.'
       }

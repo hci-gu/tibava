@@ -6,6 +6,6 @@ const frontendBaseUrl = browserLocation
   : "http://localhost";
 
 module.exports = {
-  API_LOCATION: `${frontendBaseUrl}:8000`,
+  API_LOCATION: `${frontendBaseUrl}/api`,
   THUMBNAIL_LOCATION: `${frontendBaseUrl}/thumbnails`,
 };

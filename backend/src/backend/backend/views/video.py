@@ -7,7 +7,6 @@ import logging
 import traceback
 import tempfile
 import logging
-from pathlib import Path
 
 from urllib.parse import urlparse
 import imageio
@@ -16,6 +15,7 @@ from backend.plugin_manager import PluginManager
 from backend.utils import (
     download_url,
     download_file,
+    get_file_extension,
     media_url_to_video,
     media_path_to_video,
     media_dir_to_video,
@@ -69,8 +69,7 @@ class VideoUpload(View):
                     logger.error("VideoUpload::failed")
                     return JsonResponse(download_result, status=500)
 
-                path = Path(request.FILES["file"].name)
-                ext = "".join(path.suffixes)
+                ext = get_file_extension(request.FILES["file"].name)
 
                 reader = imageio.get_reader(download_result["path"])
                 fps = reader.get_meta_data()["fps"]

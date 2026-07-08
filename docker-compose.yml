@@ -142,7 +142,7 @@ services:
   backend:
     image: ghcr.io/astral-sh/uv:debian
     ports:
-      - 8000:8000
+      - "127.0.0.1:8000:8000"
 
     volumes:
       - type: bind
@@ -188,9 +188,8 @@ services:
 
   frontend:
     image: frontend
-    ports:
-      - 8080:8080
-      - 80:80
+    expose:
+      - "80"
     build:
       context: ./frontend
     volumes:
@@ -204,3 +203,22 @@ services:
         source: ./data/media/
         target: /media
     working_dir: /app/frontend
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy_data:
+  caddy_config:

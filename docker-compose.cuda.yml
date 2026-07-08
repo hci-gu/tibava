@@ -1,10 +1,19 @@
 services:
   inference_ray:
-    image: ghcr.io/astral-sh/uv:debian
+    image: tibava-cuda-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda-uv
 
     environment:
-      - HF_HOME=/models
-      - NUMBA_CACHE_DIR=/tmp
+      HF_HOME: /models
+      HF_HUB_DISABLE_XET: "1"
+      HF_TOKEN: ${HF_TOKEN}
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN}
+      NUMBA_CACHE_DIR: /tmp
+      UV_PYTHON_DOWNLOADS: never
+      UV_NO_MANAGED_PYTHON: "1"
+      UV_PYTHON: /usr/local/bin/python3.12
 
     volumes:
       - type: bind
@@ -48,7 +57,15 @@ services:
               capabilities: [gpu]
 
   analyser:
-    image: ghcr.io/astral-sh/uv:debian
+    image: tibava-cuda-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda-uv
+
+    environment:
+      UV_PYTHON_DOWNLOADS: never
+      UV_NO_MANAGED_PYTHON: "1"
+      UV_PYTHON: /usr/local/bin/python3.12
 
     volumes:
       - type: bind
@@ -100,7 +117,10 @@ services:
       - "127.0.0.1:6380:6380"
 
   celery:
-    image: ghcr.io/astral-sh/uv:debian
+    image: tibava-cuda-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda-uv
 
     volumes:
       - type: bind
@@ -139,13 +159,19 @@ services:
 
     working_dir: /app/backend/src/backend/
     environment:
-      - TIBAVA_BACKEND_CONFIG=/app/backend/src/backend/config.json
+      TIBAVA_BACKEND_CONFIG: /app/backend/src/backend/config.json
+      UV_PYTHON_DOWNLOADS: never
+      UV_NO_MANAGED_PYTHON: "1"
+      UV_PYTHON: /usr/local/bin/python3.12
     command: uv run --package backend celery -A tibava worker -l INFO
 
   backend:
-    image: ghcr.io/astral-sh/uv:debian
+    image: tibava-cuda-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda-uv
     ports:
-      - 8000:8000
+      - "127.0.0.1:8000:8000"
 
     volumes:
       - type: bind
@@ -181,7 +207,10 @@ services:
 
     working_dir: /app/
     environment:
-      - TIBAVA_BACKEND_CONFIG=/app/backend/src/backend/config.json
+      TIBAVA_BACKEND_CONFIG: /app/backend/src/backend/config.json
+      UV_PYTHON_DOWNLOADS: never
+      UV_NO_MANAGED_PYTHON: "1"
+      UV_PYTHON: /usr/local/bin/python3.12
     command: uv run --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000
 
     depends_on:
@@ -191,9 +220,8 @@ services:
 
   frontend:
     image: frontend
-    ports:
-      - 8080:8080
-      - 80:80
+    expose:
+      - "80"
     build:
       context: ./frontend
     volumes:
@@ -207,3 +235,22 @@ services:
         source: ./data/media/
         target: /media
     working_dir: /app/frontend
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+
+volumes:
+  caddy_data:
+  caddy_config:

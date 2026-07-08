@@ -23,25 +23,17 @@
         <v-list-item @click="showModalLogin = true">
           <v-list-item-title>{{ $t("user.login.title") }}</v-list-item-title>
         </v-list-item>
-
-        <v-list-item @click="showModalRegister = true">
-          <v-list-item-title>{{ $t("user.register.title") }}</v-list-item-title>
-        </v-list-item>
       </v-list>
     </v-menu>
     <UserLogin v-model="showModalLogin">
       <activator />
     </UserLogin>
-    <UserRegister v-model="showModalRegister">
-      <activator />
-    </UserRegister>
   </div>
 </template>
 
 <script>
 import UserLogin from "@/components/UserLogin.vue";
 import UserAccount from "@/components/UserAccount.vue";
-import UserRegister from "@/components/UserRegister.vue";
 
 import { mapStores } from "pinia";
 import { useUserStore } from "@/store/user";
@@ -51,7 +43,6 @@ export default {
     return {
       menu: false,
       showModalLogin: false,
-      showModalRegister: false,
     };
   },
   computed: {
@@ -67,7 +58,6 @@ export default {
   components: {
     UserLogin,
     UserAccount,
-    UserRegister,
   },
 };
 </script>

@@ -48,24 +48,11 @@
         </v-btn>
       </v-card-actions>
 
-      <div class="grey--text px-6 pb-6" style="text-align: center">
-        {{ $t("user.login.text") }}
-
-        <a @click="showModalRegister = true">
-          {{ $t("user.register.title") }}
-        </a>
-
-        <UserRegister v-model="showModalRegister">
-          <activator />
-        </UserRegister>
-      </div>
     </v-card>
   </v-dialog>
 </template>
 
 <script>
-import UserRegister from "@/components/UserRegister.vue";
-
 import { mapStores } from "pinia";
 import { useUserStore } from "@/store/user";
 
@@ -76,7 +63,6 @@ export default {
       user: {},
       dialog: false,
       showPassword: false,
-      showModalRegister: false,
       error_message: ""
     };
   },
@@ -131,9 +117,6 @@ export default {
         this.dialog = true;
       }
     },
-  },
-  components: {
-    UserRegister,
   },
 };
 </script>

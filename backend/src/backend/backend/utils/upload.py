@@ -13,18 +13,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def check_extension(filename: Path, extensions: list):
+def get_file_extension(filename: Path | str):
     if isinstance(filename, str):
         filename = Path(filename)
-    extension = "".join(filename.suffixes)
-    extension.lower()
-    return extension in extensions
+    return filename.suffix.lower()
+
+
+def check_extension(filename: Path, extensions: list):
+    extension = get_file_extension(filename)
+    allowed_extensions = {allowed_extension.lower() for allowed_extension in extensions}
+    return extension in allowed_extensions
 
 
 def download_file(file, output_dir, output_name=None, max_size=None, extensions=None):
     try:
         path = Path(file.name)
-        ext = "".join(path.suffixes)
+        ext = get_file_extension(path)
         if output_name is not None:
             output_path = os.path.join(output_dir, f"{output_name}{ext}")
         else:
@@ -40,7 +44,7 @@ def download_file(file, output_dir, output_name=None, max_size=None, extensions=
 
         os.makedirs(output_dir, exist_ok=True)
 
-        with open(os.path.join(output_dir, output_path), "wb") as f:
+        with open(output_path, "wb") as f:
 
             for i, chunk in enumerate(file.chunks()):
                 f.write(chunk)
@@ -60,9 +64,9 @@ def download_url(url, output_dir, output_name=None, max_size=None, extensions=No
         params = cgi.parse_header(response.headers.get("Content-Disposition", ""))[-1]
         if "filename" in params:
             filename = os.path.basename(params["filename"])
-            ext = "".join(Path(filename).suffixes)
+            ext = get_file_extension(filename)
             if extensions is not None:
-                if ext not in extensions:
+                if not check_extension(filename, extensions):
 
                     return {
                         "status": "error",
@@ -76,7 +80,9 @@ def download_url(url, output_dir, output_name=None, max_size=None, extensions=No
                 return {"status": "error", "type": "downloading_error"}
 
             if extensions is not None:
-                if ext.lower() not in extensions:
+                if ext.lower() not in {
+                    allowed_extension.lower() for allowed_extension in extensions
+                }:
                     return {
                         "status": "error",
                         "type": "wrong_file_extension",

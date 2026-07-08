@@ -167,30 +167,6 @@ export const useUserStore = defineStore("user", {
       //   commit('loading/update', false, { root: true });
       // });
     },
-    async register(params) {
-      if (this.isLoading) {
-        return;
-      }
-      this.isLoading = true;
-
-      // commit('loading/update', true, { root: true });
-      return axios
-        .post(`${config.API_LOCATION}/user/register`, { params })
-        .then((res) => {
-          if (res.data.status === "ok") {
-            this.isLoading = false;
-            this.getUserData();
-          }
-          if (res.data.status === "ok" || "message" in res.data) {
-            return res.data;
-          } else {
-            return { status: "error", message: "Invalid message." };
-          }
-        })
-        .finally(() => {
-          this.isLoading = false;
-        });
-    },
   },
   persist: {
     paths: ["loggedIn"],

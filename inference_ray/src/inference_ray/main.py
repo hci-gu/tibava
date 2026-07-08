@@ -17,10 +17,10 @@ class Deployment:
         data = await request.json()
         inputs = data.get("inputs")
         parameters = data.get("parameters")
-        logging.error("###############")
-        logging.error(inputs)
-        logging.error(parameters)
-        logging.error("###############")
+        logging.info("###############")
+        logging.info(inputs)
+        logging.info(parameters)
+        logging.info("###############")
 
         plugin_inputs = {}
         for name, id in inputs.items():

@@ -5,7 +5,7 @@
     "demo_title": "Video Demonstration",
     "demo_text": "We are currently preparing a video that demonstrates the features of TIB-AV-A and explains how to use it to simplify the onboarding process. It is expected to be available by March 3 at the latest.",
     "login_title": "Need an account?",
-    "login_text": "If you do not have an account yet, you can create an account at the top right (\"Login\" -> \"Register\") or request one by writing an E-Mail to matthias.springstein@tib.eu with a short explanation of your intended usecase.",
+    "login_text": "If you do not have an account yet, ask an administrator to create one for you.",
     "format_title": "Video File Support",
     "format_text": "Please note that TIB-AV-A currently only supports the analysis of <span style='font-weight: bold;'>mp4 video files</span> to avoid long processing times due to transcoding videos on our server."
   },
@@ -465,7 +465,7 @@
     },
     "login": {
       "title": "Login",
-      "text": "Don't have an account?",
+      "text": "Ask an administrator for an account.",
       "rules": {
         "min": "Min. 5 characters.",
         "max": "Max. 50 characters."

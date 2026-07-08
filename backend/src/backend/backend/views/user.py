@@ -97,6 +97,14 @@ def login(request):
 
 @require_http_methods(["POST"])
 def register(request):
+    return JsonResponse(
+        {
+            "status": "error",
+            "message": "Public registration is disabled. Ask an administrator for an account.",
+        },
+        status=403,
+    )
+
     try:
         body = request.body.decode("utf-8")
     except (UnicodeDecodeError, AttributeError):

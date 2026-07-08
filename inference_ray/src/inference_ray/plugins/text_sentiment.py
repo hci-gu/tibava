@@ -140,12 +140,16 @@ class TextSentiment(
             data_manager.create_data("AnnotationData") as ann_data,
         ):
             ann_data.name = f"Speech Sentiment: {self.model_type.title()}"
-            for _, speaker_data in input_annotations:
-                with speaker_data as speaker_data:
-                    predictions = classify_segments(
-                        speaker_data.annotations, speaker_data.name
-                    )
-                    ann_data.annotations.extend(predictions)
+            if hasattr(input_annotations, "annotations"):
+                predictions = classify_segments(input_annotations.annotations)
+                ann_data.annotations.extend(predictions)
+            else:
+                for _, speaker_data in input_annotations:
+                    with speaker_data as speaker_data:
+                        predictions = classify_segments(
+                            speaker_data.annotations, speaker_data.name
+                        )
+                        ann_data.annotations.extend(predictions)
 
             self.update_callbacks(callbacks, progress=1.0)
             return {

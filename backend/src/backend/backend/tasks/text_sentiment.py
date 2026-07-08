@@ -77,8 +77,7 @@ class TextSentiment(Task):
 
         segmentation_result = self.run_analyser(
             client,
-            "whisper_x",
-            parameters={"language_code": None},
+            "whisper",
             inputs={**audio_result[0]},
             outputs=["annotations"],
         )

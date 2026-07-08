@@ -5,6 +5,7 @@ from data import DataManager, Data  # type: ignore
 
 from typing import Callable, Dict
 import logging
+import os
 
 default_config = {
     "data_dir": "/data/",
@@ -21,6 +22,29 @@ requires = {
 provides = {
     "annotations": ListData,
 }
+
+
+def build_diarization_pipeline(whisperx, device: str):
+    diarization_pipeline = getattr(whisperx, "DiarizationPipeline", None)
+    if diarization_pipeline is None:
+        try:
+            from whisperx.diarize import DiarizationPipeline
+        except ImportError as exc:
+            raise AttributeError(
+                "Could not find WhisperX DiarizationPipeline in whisperx or "
+                "whisperx.diarize. Pin WhisperX to a compatible release or "
+                "update the diarization integration."
+            ) from exc
+        diarization_pipeline = DiarizationPipeline
+
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if token:
+        try:
+            return diarization_pipeline(use_auth_token=token, device=device)
+        except TypeError:
+            return diarization_pipeline(token=token, device=device)
+
+    return diarization_pipeline(device=device)
 
 
 def get_speaker_turns(
@@ -95,7 +119,10 @@ class WhisperX(
                 compute_type="int8",
                 language=parameters.get("language_code"),
             )  # TODO originally compute_type="float16" but not supported by m1. probably change back for production
-            self.diarize_model = whisperx.DiarizationPipeline(device=device)
+            self.device = device
+
+        if self.diarize_model is None:
+            self.diarize_model = build_diarization_pipeline(whisperx, device)
             self.device = device
 
         with (

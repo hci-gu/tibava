@@ -4,7 +4,9 @@
     "allowed_hosts": [
         "localhost",
         "127.0.0.1",
-        "tactik-pc"
+        "tactik-pc",
+        "130.241.23.170",
+        "tactik.appadem.in"
     ],
     "csrf_trusted_origins": [
         "http://localhost",
@@ -12,7 +14,12 @@
         "http://127.0.0.1",
         "http://127.0.0.1:8000",
         "http://tactik-pc",
-        "http://tactik-pc:8000"
+        "http://tactik-pc:8000",
+        "http://130.241.23.170",
+        "http://130.241.23.170:8000",
+        "http://tactik.appadem.in",
+        "http://tactik.appadem.in:8000",
+        "https://tactik.appadem.in"
     ],
     "cors_allow_all_origins": false,
     "cors_origin_allow_all": false,
@@ -22,17 +29,22 @@
         "http://127.0.0.1",
         "http://127.0.0.1:8080",
         "http://tactik-pc",
-        "http://tactik-pc:8080"
+        "http://tactik-pc:8080",
+        "http://130.241.23.170",
+        "http://130.241.23.170:8080",
+        "http://tactik.appadem.in",
+        "http://tactik.appadem.in:8080",
+        "https://tactik.appadem.in"
     ],
     "debug": false,
     "language_code": "en-us",
     "static_url": "/static/",
     "media_root": "/media/",
-    "media_base_url": "http://tactik-pc",
+    "media_base_url": "https://tactik.appadem.in",
     "upload_root": "/upload/",
     "media_url": "/media/",
     "upload_url": "/upload/",
-    "thumbnail_url": "http://tactik-pc/thumbnails/",
+    "thumbnail_url": "https://tactik.appadem.in/thumbnails/",
     "grpc_host": "analyser",
     "grpc_port": "50051"
 }
