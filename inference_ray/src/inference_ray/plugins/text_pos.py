@@ -71,6 +71,17 @@ class PoSTagging(
     ) -> Dict[str, Data]:
         import numpy as np
         import stanza
+        import torch
+
+        if not getattr(torch.load, "_tibava_weights_only_patch", False):
+            torch_load = torch.load
+
+            def load_with_trusted_stanza_defaults(*args, **kwargs):
+                kwargs.setdefault("weights_only", False)
+                return torch_load(*args, **kwargs)
+
+            load_with_trusted_stanza_defaults._tibava_weights_only_patch = True
+            torch.load = load_with_trusted_stanza_defaults
 
         def get_models(
             language_code: str,

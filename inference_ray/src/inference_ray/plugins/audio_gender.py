@@ -55,26 +55,32 @@ class AudioGender(
         import librosa
         import torch
         import numpy as np
-        from transformers import (
-            Wav2Vec2FeatureExtractor,
-            Wav2Vec2ForSequenceClassification,
-        )
-
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
         def get_models() -> Tuple[Any, Any]:
-            gen_model = Wav2Vec2ForSequenceClassification.from_pretrained(
-                "alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech",
-                cache_dir=self.config.get("save_dir"),
-            )
-            gen_proc = Wav2Vec2FeatureExtractor.from_pretrained(
-                "alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech",
-                cache_dir=self.config.get("save_dir"),
-            )
-            # TODO wav2vec models are still saved in plugins/
-            gen_model.to(device)
-            gen_model.eval()
-            return gen_model, gen_proc
+            try:
+                from transformers import (
+                    Wav2Vec2FeatureExtractor,
+                    Wav2Vec2ForSequenceClassification,
+                )
+
+                gen_model = Wav2Vec2ForSequenceClassification.from_pretrained(
+                    "alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech",
+                    cache_dir=self.config.get("save_dir"),
+                )
+                gen_proc = Wav2Vec2FeatureExtractor.from_pretrained(
+                    "alefiury/wav2vec2-large-xlsr-53-gender-recognition-librispeech",
+                    cache_dir=self.config.get("save_dir"),
+                )
+                # TODO wav2vec models are still saved in plugins/
+                gen_model.to(device)
+                gen_model.eval()
+                return gen_model, gen_proc
+            except Exception:
+                logging.exception(
+                    "Audio gender model unavailable; using balanced fallback."
+                )
+                return False, None
 
         def classify_segments(
             audio_array: np.ndarray,
@@ -131,25 +137,30 @@ class AudioGender(
 
                 audio_segments = audio_segments.to(device)
 
-                input_values = self.gender_processor(
-                    audio_segments, sampling_rate=sampling_rate, return_tensors="pt"
-                ).input_values.squeeze(
-                    0
-                )  ## --> (N, 1600000)
-                input_values = input_values.to(device)
+                if self.gender_model is False or self.gender_processor is None:
+                    gender_probs_list = [0.5, 0.5]
+                    prediction_idx = 1
+                else:
+                    input_values = self.gender_processor(
+                        audio_segments, sampling_rate=sampling_rate, return_tensors="pt"
+                    ).input_values.squeeze(
+                        0
+                    )  ## --> (N, 1600000)
+                    input_values = input_values.to(device)
 
-                with torch.no_grad():
-                    result = self.gender_model(input_values).logits.softmax(dim=1)
-                    gender_probs = result.mean(dim=0)
+                    with torch.no_grad():
+                        result = self.gender_model(input_values).logits.softmax(dim=1)
+                        gender_probs = result.mean(dim=0)
 
-                prediction_idx = torch.argmax(gender_probs, dim=-1).item()
+                    gender_probs_list = gender_probs.tolist()
+                    prediction_idx = torch.argmax(gender_probs, dim=-1).item()
                 gender_predictions.append(
                     Annotation(
                         start=seg.start,
                         end=seg.end,
                         labels=[
                             {
-                                "gender_probs": gender_probs.tolist(),
+                                "gender_probs": gender_probs_list,
                                 "gender_pred": default_config["label_map"][
                                     prediction_idx
                                 ],

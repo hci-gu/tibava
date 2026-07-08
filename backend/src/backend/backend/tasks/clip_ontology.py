@@ -139,6 +139,7 @@ class CLIPOntology(Task):
 
         with transaction.atomic():
             with aggregate_result[1]["aggregated_scalars"] as data:
+                annotation_timeline_db = None
                 # Annotate shots
                 if shots_id:
                     annotater_result = self.run_analyser(
@@ -186,6 +187,7 @@ class CLIPOntology(Task):
                 data.extract_all(manager)
                 timeline_dict = {}
                 data_list = {}
+                plugin_run_results = []
                 for index, sub_data in zip(data.index, data.data):
                     plugin_run_result_db = PluginRunResult.objects.create(
                         plugin_run=plugin_run,
@@ -202,17 +204,22 @@ class CLIPOntology(Task):
                         parent=annotation_timeline_db,
                     )
                     timeline_dict.update({index: timeline_db.id.hex})
-                    data_list.update({index: sub_data.id})
+                    data_list.update({index: sub_data})
+                    plugin_run_results.append(plugin_run_result_db.id.hex)
 
                 return {
                     "plugin_run": plugin_run.id.hex,
-                    "plugin_run_results": [plugin_run_result_db.id.hex],
+                    "plugin_run_results": plugin_run_results,
                     "timelines": {
-                        "annotations": annotation_timeline_db,
+                        "annotations": (
+                            annotation_timeline_db.id.hex
+                            if annotation_timeline_db is not None
+                            else None
+                        ),
                         **timeline_dict,
                     },
                     "data": {
-                        "annotations": result[1]["aggregated_scalars"].id,
+                        "annotations": aggregate_result[1]["aggregated_scalars"].id,
                         **data_list,
                     },
                 }

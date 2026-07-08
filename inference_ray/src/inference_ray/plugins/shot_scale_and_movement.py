@@ -87,6 +87,7 @@ class ShotScaleAndMovement(
 
         class CustomModel(PreTrainedModel):
             config_class = CustomVideoMAEConfig
+            all_tied_weights_keys = {}
 
             def __init__(
                 self, config, scale_num_classes=None, movement_num_classes=None

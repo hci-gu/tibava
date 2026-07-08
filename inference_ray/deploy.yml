@@ -18,7 +18,7 @@ applications:
           max_replicas: 20
         ray_actor_options:
           runtime_env:
-            uv:
+            pip:
               - requests==2.26.0
   - name: audio_amp_analysis
     route_prefix: /audio_amp_analysis
@@ -34,7 +34,7 @@ applications:
           max_replicas: 20
         ray_actor_options:
           runtime_env:
-            uv:
+            pip:
               # - librosa==0.10.1
               # - setuptools>=75.8.0
               - librosa
@@ -98,7 +98,7 @@ applications:
           max_replicas: 20
 
           runtime_env:
-            uv:
+            pip:
               - "open-clip-torch==2.24.0"
               - git+https://github.com/SpringsteinM/imageio.git
               - torch>=2.6.0
@@ -120,7 +120,7 @@ applications:
           max_replicas: 20
 
           runtime_env:
-            uv:
+            pip:
               - "open-clip-torch==2.24.0"
               - git+https://github.com/SpringsteinM/imageio.git
               - torch>=2.6.0
@@ -142,7 +142,7 @@ applications:
           max_replicas: 20
 
           runtime_env:
-            uv:
+            pip:
               - "open-clip-torch==2.24.0"
               - git+https://github.com/SpringsteinM/imageio.git
               - torch>=2.6.0
@@ -164,7 +164,7 @@ applications:
           max_replicas: 20
 
           runtime_env:
-            uv:
+            pip:
               - "open-clip-torch==2.24.0"
               - git+https://github.com/SpringsteinM/imageio.git
               - torch>=2.6.0
@@ -412,7 +412,7 @@ applications:
       model: shot_type_classifier
       data_path: /data
       params:
-        model_path: /models/shot_type_classification/shot_type_classifier_e9-s3199.pt
+        model_path: /models/shot_type_classification/shot_type_classifier_e9-s3199_cpu.pt
     deployments:
       - name: Deployment
         autoscaling_config:
@@ -701,7 +701,7 @@ applications:
           # num_cpus: 2
           num_gpus: 0.1
           runtime_env:
-            uv:
+            pip:
               - git+https://github.com/SpringsteinM/imageio.git
               - torch>=2.6.0
               - pillow
@@ -725,9 +725,9 @@ applications:
           max_replicas: 20
         ray_actor_options:
           # num_cpus: 2
-          num_gpus: 1.0
+          num_gpus: 0.1
           runtime_env:
-            uv:
+            pip:
               - git+https://github.com/SpringsteinM/imageio.git
               - torch>=2.6.0
               - pillow
@@ -907,11 +907,12 @@ applications:
         ray_actor_options:
           num_cpus: 2
           runtime_env:
-            uv:
+            pip:
               - librosa==0.10.1
               - torch>=2.6.0
               - transformers>=4.48.3
               - speechbrain==1.0.2
+              - setuptools<81
   - name: audio_gender
     route_prefix: /audio_gender
     import_path: inference_ray.main:app_builder
@@ -926,11 +927,12 @@ applications:
         ray_actor_options:
           num_cpus: 2
           runtime_env:
-            uv:
+            pip:
               - librosa==0.10.1
               - torch>=2.6.0
               - transformers>=4.48.3
               - speechbrain==1.0.2
+              - setuptools<81
   - name: active_speaker_detection
     route_prefix: /active_speaker_detection
     import_path: inference_ray.main:app_builder
@@ -967,10 +969,11 @@ applications:
         ray_actor_options:
           num_cpus: 2
           runtime_env:
-            uv:
+            pip:
               - librosa==0.10.1
               - torch>=2.6.0
               - torchaudio # TODO specify version
+              - setuptools<81
   - name: text_ner
     route_prefix: /text_ner
     import_path: inference_ray.main:app_builder
@@ -1026,7 +1029,7 @@ applications:
     route_prefix: /nano_ocr_video
     import_path: inference_ray.main:app_builder
     runtime_env:
-      uv:
+      pip:
         - transformers>=4.54.0
         - accelerate>=1.9.0
         - torchvision>=0.22.1

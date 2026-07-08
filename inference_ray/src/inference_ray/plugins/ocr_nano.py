@@ -60,39 +60,51 @@ class NanoOCRVideo(
     def __init__(self, config=None, **kwargs):
         super().__init__(config, **kwargs)
         self.model = None
+        self.model_error = None
 
     def init_model(self):
         if self.model is None:
-            from transformers import (
-                AutoTokenizer,
-                AutoProcessor,
-                AutoModelForImageTextToText,
-                HqqConfig,
-            )
-            import torch
-            from hqq.utils.patching import prepare_for_inference
-            from hqq.core.quantize import HQQLinear, HQQBackend
+            try:
+                self._init_model()
+            except Exception as exc:
+                logging.exception(
+                    "Nano OCR model initialization failed; returning empty OCR "
+                    "annotations for this run."
+                )
+                self.model_error = str(exc)
+                self.model = False
 
-            # HQQLinear.set_backend(HQQBackend.PYTORCH_COMPILE)  # Compiled Pytorch
+    def _init_model(self):
+        from transformers import (
+            AutoTokenizer,
+            AutoProcessor,
+            AutoModelForImageTextToText,
+            HqqConfig,
+        )
+        import torch
+        from hqq.utils.patching import prepare_for_inference
+        from hqq.core.quantize import HQQLinear, HQQBackend
 
-            quant_config = HqqConfig(nbits=4, group_size=64)
+        # HQQLinear.set_backend(HQQBackend.PYTORCH_COMPILE)  # Compiled Pytorch
 
-            nano_model_path = "nanonets/Nanonets-OCR-s"
+        quant_config = HqqConfig(nbits=4, group_size=64)
 
-            self.model = AutoModelForImageTextToText.from_pretrained(
-                nano_model_path,
-                # torch_dtype="auto",
-                torch_dtype=torch.bfloat16,
-                device_map="cpu",
-                quantization_config=quant_config,
-                # attn_implementation="flash_attention_2",
-            )
+        nano_model_path = "nanonets/Nanonets-OCR-s"
 
-            prepare_for_inference(self.model, backend="torchao_int4")
-            self.model.eval()
+        self.model = AutoModelForImageTextToText.from_pretrained(
+            nano_model_path,
+            # torch_dtype="auto",
+            torch_dtype=torch.bfloat16,
+            device_map="cpu",
+            quantization_config=quant_config,
+            # attn_implementation="flash_attention_2",
+        )
 
-            self.tokenizer = AutoTokenizer.from_pretrained(nano_model_path)
-            self.processor = AutoProcessor.from_pretrained(nano_model_path)
+        prepare_for_inference(self.model, backend="torchao_int4")
+        self.model.eval()
+
+        self.tokenizer = AutoTokenizer.from_pretrained(nano_model_path)
+        self.processor = AutoProcessor.from_pretrained(nano_model_path)
 
     def ocr_page_with_nanonets_s(self, image, max_new_tokens=4096):
         prompt = """Extract the text from the above image as if you were reading it naturally. Return the tables in html format. Return the equations in LaTeX representation. If there is an image in the document and image caption is not present, add a small description of the image inside the <img></img> tag; otherwise, add the image caption inside <img></img>. Watermarks should be wrapped in brackets. Ex: <watermark>OFFICIAL COPY</watermark>. Page numbers should be wrapped in brackets. Ex: <page_number>14</page_number> or <page_number>9/22</page_number>. Prefer using ☐ and ☑ for check boxes."""
@@ -163,6 +175,13 @@ class NanoOCRVideo(
                     data_manager.create_data("StringsData") as strings_data,
                     data_manager.create_data("AnnotationData") as annotations_data,
                 ):
+                    if self.model is False:
+                        self.update_callbacks(callbacks, progress=1.0)
+                        return {
+                            "strings": strings_data,
+                            "annotations": annotations_data,
+                        }
+
                     for frame in video_decoder:
                         result = self.ocr_page_with_nanonets_s(
                             frame["frame"], max_new_tokens=500

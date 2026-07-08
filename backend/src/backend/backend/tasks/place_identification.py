@@ -62,9 +62,9 @@ class InsightfaceIdentification(Task):
         # upload all data
         video_id = self.upload_video(client, video)
 
-        places_result = self.run_analyser(
+        video_feature_result = self.run_analyser(
             client,
-            "places_classifier",
+            "clip_image_embedding",
             parameters={
                 "fps": parameters.get("fps"),
             },
@@ -76,8 +76,28 @@ class InsightfaceIdentification(Task):
             plugin_run.progress = 0.3
             plugin_run.save()
 
-        if places_result is None:
+        if video_feature_result is None:
             raise Exception
+
+        if parameters.get("embedding_ref") is None:
+            image_data = manager.create_data("ImagesData")
+            with image_data:
+                image_path = parameters.get("query_images")
+                image = iio.imread(image_path)
+                image_data.save_image(image)
+
+            query_image_id = client.upload_data(image_data)
+            query_image_feature_result = self.run_analyser(
+                client,
+                "clip_image_embedding",
+                inputs={"video": query_image_id},
+                outputs=["embeddings"],
+            )
+            if query_image_feature_result is None:
+                raise Exception
+            query_features = query_image_feature_result[0]["embeddings"]
+        else:
+            query_features = parameters.get("embedding_ref")
 
         result = self.run_analyser(
             client,
@@ -88,8 +108,8 @@ class InsightfaceIdentification(Task):
                 "cluster_id": parameters.get("cluster_id"),
             },
             inputs={
-                "target_features": places_result[0]["embeddings"],
-                "query_features": parameters.get("embedding_ref"),
+                "target_features": video_feature_result[0]["embeddings"],
+                "query_features": query_features,
             },
             outputs=["probs"],
         )
@@ -134,6 +154,8 @@ class InsightfaceIdentification(Task):
                 return {
                     "plugin_run": plugin_run.id.hex,
                     "plugin_run_results": [plugin_run_result_db.id.hex],
-                    "timelines": {"annotations": timeline_db},
-                    "data": {"annotations": result[1]["aggregated_scalars"].id},
+                    "timelines": {"annotations": timeline_db.id.hex},
+                    "data": {
+                        "annotations": aggregated_result[1]["aggregated_scalar"].id
+                    },
                 }

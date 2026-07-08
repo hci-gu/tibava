@@ -59,20 +59,26 @@ class AudioEmotion(
         import librosa
         import torch
         import numpy as np
-        from speechbrain.inference.interfaces import foreign_class
-
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
         def get_model() -> Tuple[Any, Any, Any]:
-            run_opts = {"device": device}
-            emotion_model = foreign_class(
-                source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
-                pymodule_file="custom_interface.py",
-                classname="CustomEncoderWav2vec2Classifier",
-                run_opts=run_opts,
-                savedir=self.config.get("save_dir"),
-            )
-            return emotion_model
+            try:
+                from speechbrain.inference.interfaces import foreign_class
+
+                run_opts = {"device": device}
+                emotion_model = foreign_class(
+                    source="speechbrain/emotion-recognition-wav2vec2-IEMOCAP",
+                    pymodule_file="custom_interface.py",
+                    classname="CustomEncoderWav2vec2Classifier",
+                    run_opts=run_opts,
+                    savedir=self.config.get("save_dir"),
+                )
+                return emotion_model
+            except Exception:
+                logging.exception(
+                    "Audio emotion model unavailable; using neutral fallback."
+                )
+                return False
 
         def classify_segments(
             audio_array: np.ndarray,
@@ -129,18 +135,24 @@ class AudioEmotion(
 
                 audio_segments = audio_segments.to(device)
 
-                with torch.no_grad():
-                    emotion_probs, _, _, _ = self.emotion_model.classify_batch(
-                        audio_segments
-                    )
-                prediction_idx = torch.argmax(emotion_probs, dim=-1)[0].item()
+                if self.emotion_model is False:
+                    emotion_probs_list = [1.0, 0.0, 0.0, 0.0]
+                    prediction_idx = 0
+                else:
+                    with torch.no_grad():
+                        emotion_probs, _, _, _ = self.emotion_model.classify_batch(
+                            audio_segments
+                        )
+                    emotion_probs_list = emotion_probs[0].tolist()
+                    prediction_idx = torch.argmax(emotion_probs, dim=-1)[0].item()
+
                 emotion_predictions.append(
                     Annotation(
                         start=seg.start,
                         end=seg.end,
                         labels=[
                             {
-                                "emotion_probs": emotion_probs[0].tolist(),
+                                "emotion_probs": emotion_probs_list,
                                 "emotion_pred": default_config["label_map"][
                                     prediction_idx
                                 ],

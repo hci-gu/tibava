@@ -74,8 +74,13 @@ class ImageEmbeddings(Data):
             {"embeddings": [x.to_save() for x in self.embeddings]},
         )
 
+        embeddings = (
+            np.stack([x.embedding for x in self.embeddings], axis=0)
+            if self.embeddings
+            else np.empty((0, 0), dtype=np.float32)
+        )
         with self.fs.open_file("embeddings.npz", "w") as f:
-            np.save(f, np.stack([x.embedding for x in self.embeddings], axis=0))
+            np.save(f, embeddings)
 
     def to_dict(self) -> dict:
         return {

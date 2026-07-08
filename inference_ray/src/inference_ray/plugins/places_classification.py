@@ -123,7 +123,11 @@ class PlacesClassifier(
         import torch
         import math
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = self.config.get("model_device")
+        if device not in {"cpu", "cuda"}:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cuda" and not torch.cuda.is_available():
+            device = "cpu"
 
         if self.model is None:
             self.model = torch.jit.load(
@@ -138,17 +142,27 @@ class PlacesClassifier(
             data_manager.create_data("PlacesData") as places_data,
         ):
 
-            with input_data(fps=parameters.get("fps")) as input_iterator:
+            with input_data.open_video() as f_video:
+                input_iterator = VideoDecoder(
+                    path=f_video,
+                    max_dimension=self.image_resolution,
+                    fps=parameters.get("fps"),
+                    extension=f".{input_data.ext}",
+                )
                 probs = {"places365": [], "places16": [], "places3": []}
                 time = []
-                num_frames = len(input_iterator)
+                num_frames = max(
+                    int(input_iterator.duration() * input_iterator.fps()), 1
+                )
                 places_data.places = []
 
                 for i, frame in enumerate(input_iterator):
+                    image = image_pad(frame["frame"])
+                    image_tensor = torch.from_numpy(image).to(self.device)
+                    if self.device == "cuda":
+                        image_tensor = image_tensor.half()
                     with torch.no_grad(), torch.cuda.amp.autocast():
-                        raw_result = self.model(
-                            torch.from_numpy(frame["frame"]).to(self.device)
-                        )
+                        raw_result = self.model(image_tensor)
                     embedding = raw_result[0].cpu().detach().numpy()
                     prob = raw_result[1].cpu().detach().numpy()
                     # result = self.server(
@@ -192,7 +206,7 @@ class PlacesClassifier(
                     places_data.places.append(place)
 
                     images_data.save_image(
-                        image=frame.get("frame"),
+                        image=image,
                         ext="jpg",
                         time=frame.get("time"),
                         delta_time=1 / parameters.get("fps"),

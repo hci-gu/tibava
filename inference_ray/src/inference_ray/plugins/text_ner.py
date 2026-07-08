@@ -64,6 +64,17 @@ class NamedEntityRecognition(
         import requests
         import numpy as np
         import stanza
+        import torch
+
+        if not getattr(torch.load, "_tibava_weights_only_patch", False):
+            torch_load = torch.load
+
+            def load_with_trusted_stanza_defaults(*args, **kwargs):
+                kwargs.setdefault("weights_only", False)
+                return torch_load(*args, **kwargs)
+
+            load_with_trusted_stanza_defaults._tibava_weights_only_patch = True
+            torch.load = load_with_trusted_stanza_defaults
 
         # functions from text_utils.py TODO clean import
         def get_stanza_ner_annotations(proc_text):
@@ -433,11 +444,21 @@ class NamedEntityRecognition(
                 use_gpu=True,
             )
 
-            with open(self.config.get("save_dir") / "organization.json", "r") as f:
-                org_list = json.load(f)
+            organization_path = self.config.get("save_dir") / "organization.json"
+            occurrence_event_path = self.config.get("save_dir") / "occurrence_event.json"
+            if organization_path.exists():
+                with open(organization_path, "r") as f:
+                    org_list = json.load(f)
+            else:
+                logging.warning("%s is missing; using empty organization list.", organization_path)
+                org_list = []
 
-            with open(self.config.get("save_dir") / "occurrence_event.json", "r") as f:
-                event_list = json.load(f)
+            if occurrence_event_path.exists():
+                with open(occurrence_event_path, "r") as f:
+                    event_list = json.load(f)
+            else:
+                logging.warning("%s is missing; using empty event list.", occurrence_event_path)
+                event_list = []
             return nlp, org_list, event_list
 
         def classify_segments(

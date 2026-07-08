@@ -67,19 +67,25 @@ class ActiveSpeakerDetection(
         import cv2
 
         sys.path.append("/models/asd/Light-ASD")
-        from ASD import ASD  # type: ignore
-
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        model = ASD()
-        model_path = (
-            "Light-ASD/weight/finetuning_TalkSet.model"
-            if default_config["model"] == "talkset"
-            else "Light-ASD/weight/pretrain_AVA_CVPR.model"
-        )
-        model.loadParameters(default_config["save_dir"] / model_path)
-        model.to(device)
-        model.eval()
+        try:
+            from ASD import ASD  # type: ignore
+
+            model = ASD()
+            model_path = (
+                "Light-ASD/weight/finetuning_TalkSet.model"
+                if default_config["model"] == "talkset"
+                else "Light-ASD/weight/pretrain_AVA_CVPR.model"
+            )
+            model.loadParameters(default_config["save_dir"] / model_path)
+            model.to(device)
+            model.eval()
+        except Exception:
+            logging.exception(
+                "Light-ASD model is unavailable; returning non-speaking face tracks"
+            )
+            model = None
 
         with (
             inputs["video"] as video_data,
@@ -87,6 +93,34 @@ class ActiveSpeakerDetection(
             inputs["face_tracks"] as face_tracks,
             data_manager.create_data("AnnotationData") as speaker_tracks,
         ):
+            if model is None:
+                for track in face_tracks.annotations:
+                    track_data = track.labels[0] if track.labels else {}
+                    speaker_tracks.annotations.append(
+                        Annotation(
+                            start=track.start,
+                            end=track.end,
+                            labels=[
+                                {
+                                    "track_id": track_data.get("track_id"),
+                                    "frames": track_data.get("frames", []),
+                                    "bbox": track_data.get("bboxes", []),
+                                    "is_speaking": False,
+                                    "speaking_ratio": 0.0,
+                                    "speaking_frames": 0,
+                                    "mean_score": None,
+                                    "original_scores": [],
+                                    "smoothed_scores": [],
+                                    "fallback_reason": "Light-ASD model unavailable",
+                                }
+                            ],
+                        )
+                    )
+
+                return {
+                    "speaker_tracks": speaker_tracks,
+                }
+
             with (
                 audio_data.open_audio("r") as audio_file,
                 video_data.open_video() as video_file,

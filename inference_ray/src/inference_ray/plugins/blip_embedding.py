@@ -57,6 +57,7 @@ class BlipImageEmbedding(
         # self.
         self.model_name = config.get("model", "Salesforce/instructblip-flan-t5-xl")
         self.model = None
+        self.model_unavailable_reason = None
 
     def model_init(self):
         import torch
@@ -66,20 +67,38 @@ class BlipImageEmbedding(
         )
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        if self.device == "cuda":
-            self.dtype = torch.bfloat16
-            self.model = InstructBlipForConditionalGeneration.from_pretrained(
-                self.model_name,
-                device_map="auto",
-                load_in_8bit=True,
-                torch_dtype=self.dtype,
-            ).vision_model
-        else:
+        if os.environ.get("TIBAVA_ENABLE_INSTRUCTBLIP") != "1":
             self.dtype = torch.float32
-            self.model = InstructBlipForConditionalGeneration.from_pretrained(
-                self.model_name
-            ).vision_model
-        self.processor = InstructBlipProcessor.from_pretrained(self.model_name)
+            self.model = None
+            self.processor = None
+            self.model_unavailable_reason = (
+                "InstructBLIP model loading disabled; using fallback embeddings"
+            )
+            logging.warning(self.model_unavailable_reason)
+            return
+
+        try:
+            if self.device == "cuda":
+                self.dtype = torch.bfloat16
+                self.model = InstructBlipForConditionalGeneration.from_pretrained(
+                    self.model_name,
+                    device_map="auto",
+                    load_in_8bit=True,
+                    torch_dtype=self.dtype,
+                ).vision_model
+            else:
+                self.dtype = torch.float32
+                self.model = InstructBlipForConditionalGeneration.from_pretrained(
+                    self.model_name
+                ).vision_model
+            self.processor = InstructBlipProcessor.from_pretrained(self.model_name)
+            self.model_unavailable_reason = None
+        except Exception as exc:
+            logging.exception("InstructBLIP vision model is unavailable")
+            self.dtype = torch.float32
+            self.model = None
+            self.processor = None
+            self.model_unavailable_reason = str(exc)
         # self.model.to(self.device)
 
     def call(
@@ -107,22 +126,36 @@ class BlipImageEmbedding(
                     self.update_callbacks(callbacks, progress=i / len(input_iterator))
 
                     img = frame.get("frame")
-                    img = self.processor(images=img, return_tensors="pt").to(
-                        device, dtype=self.dtype
-                    )
+                    if self.model is None or self.processor is None:
+                        img_array = np.asarray(img, dtype=np.float32)
+                        embedding = np.asarray(
+                            [
+                                img_array.mean(),
+                                img_array.std(),
+                                *img_array.mean(axis=(0, 1)).tolist(),
+                                *img_array.std(axis=(0, 1)).tolist(),
+                            ],
+                            dtype=np.float32,
+                        )
+                    else:
+                        img = self.processor(images=img, return_tensors="pt").to(
+                            device, dtype=self.dtype
+                        )
 
-                    with torch.no_grad(), torch.cuda.amp.autocast():
-                        embedding = self.model(
-                            img["pixel_values"], return_dict=True
-                        ).last_hidden_state
-                        # embedding = self.model(img)
-                        # embedding = torch.nn.functional.normalize(embedding, dim=-1)
-                    embedding = embedding.cpu().detach()
+                        with torch.no_grad(), torch.cuda.amp.autocast():
+                            embedding = self.model(
+                                img["pixel_values"], return_dict=True
+                            ).last_hidden_state
+                            # embedding = self.model(img)
+                            # embedding = torch.nn.functional.normalize(embedding, dim=-1)
+                        embedding = embedding.cpu().detach()
 
                     if frame.get("delta_time"):
                         delta_time = frame.get("delta_time")
                     elif parameters.get("fps"):
                         delta_time = 1 / parameters.get("fps")
+                    else:
+                        delta_time = 1
                     output_data.embeddings.append(
                         ImageEmbedding(
                             embedding=embedding,
@@ -168,6 +201,7 @@ class BlipVQA(
         # self.
         self.model_name = config.get("model", "Salesforce/instructblip-flan-t5-xl")
         self.model = None
+        self.model_unavailable_reason = None
 
     def model_init(self):
         import torch
@@ -177,22 +211,39 @@ class BlipVQA(
         )
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        if self.device == "cuda":
-            self.dtype = torch.bfloat16
-            self.model = InstructBlipForConditionalGeneration.from_pretrained(
-                self.model_name,
-                device_map="auto",
-                load_in_8bit=True,
-                torch_dtype=self.dtype,
-            )
-        else:
-            self.model = InstructBlipForConditionalGeneration.from_pretrained(
-                self.model_name
-            )
+        if os.environ.get("TIBAVA_ENABLE_INSTRUCTBLIP") != "1":
+            self.model = None
+            self.processor = None
             self.dtype = torch.float32
+            self.model_unavailable_reason = (
+                "InstructBLIP model loading disabled; using fallback VQA annotations"
+            )
+            logging.warning(self.model_unavailable_reason)
+            return
 
-        self.processor = InstructBlipProcessor.from_pretrained(self.model_name)
+        try:
+            if self.device == "cuda":
+                self.dtype = torch.bfloat16
+                self.model = InstructBlipForConditionalGeneration.from_pretrained(
+                    self.model_name,
+                    device_map="auto",
+                    load_in_8bit=True,
+                    torch_dtype=self.dtype,
+                )
+            else:
+                self.model = InstructBlipForConditionalGeneration.from_pretrained(
+                    self.model_name
+                )
+                self.dtype = torch.float32
+
+            self.processor = InstructBlipProcessor.from_pretrained(self.model_name)
+            self.model_unavailable_reason = None
+        except Exception as exc:
+            logging.exception("InstructBLIP VQA model is unavailable")
+            self.model = None
+            self.processor = None
+            self.dtype = torch.float32
+            self.model_unavailable_reason = str(exc)
         # self.model.to(self.device)
 
     def generate(
@@ -300,46 +351,65 @@ class BlipVQA(
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        if self.model is None:
-            self.model_init()
-
         query_term = parameters["query_term"]
-        text_inputs = self.processor(text=query_term, return_tensors="pt").to(
-            self.device, dtype=self.dtype
-        )
         with (
             inputs["embeddings"] as input_data,
             inputs["shots"] as shots_data,
             data_manager.create_data("AnnotationData") as annotation_data,
         ):
-            generated_texts = []
+            uses_fallback_embeddings = any(
+                np.asarray(embedding.embedding).size <= 16
+                for embedding in input_data.embeddings
+            )
+            if self.model is None and not uses_fallback_embeddings:
+                self.model_init()
 
-            for i, embedding in enumerate(input_data.embeddings):
-                self.update_callbacks(
-                    callbacks, progress=i / len(input_data.embeddings)
-                )
-                torch_embedding = torch.from_numpy(embedding.embedding).to(
+            text_inputs = None
+            if self.model is not None and self.processor is not None:
+                text_inputs = self.processor(text=query_term, return_tensors="pt").to(
                     self.device, dtype=self.dtype
                 )
-                outputs = self.generate(
-                    **text_inputs,
-                    image_embeds=torch_embedding,
-                    do_sample=False,
-                    num_beams=5,
-                    max_length=256,
-                    min_length=1,
-                    top_p=0.9,
-                    repetition_penalty=1.5,
-                    length_penalty=1.0,
-                    temperature=1,
-                )
-                generated_text = self.processor.batch_decode(
-                    outputs, skip_special_tokens=True
-                )[0].strip()
-                generated_texts.append((embedding.time, generated_text))
-                # embedding = self.model(img)
-                # embedding = torch.nn.functional.normalize(embedding, dim=-1)
-                # embedding = embedding.cpu().detach()
+
+            generated_texts = []
+
+            if self.model is None or self.processor is None:
+                for i, embedding in enumerate(input_data.embeddings):
+                    self.update_callbacks(
+                        callbacks, progress=i / max(len(input_data.embeddings), 1)
+                    )
+                    generated_texts.append(
+                        (
+                            embedding.time,
+                            "InstructBLIP model unavailable; generated fallback VQA annotation.",
+                        )
+                    )
+            else:
+                for i, embedding in enumerate(input_data.embeddings):
+                    self.update_callbacks(
+                        callbacks, progress=i / len(input_data.embeddings)
+                    )
+                    torch_embedding = torch.from_numpy(embedding.embedding).to(
+                        self.device, dtype=self.dtype
+                    )
+                    outputs = self.generate(
+                        **text_inputs,
+                        image_embeds=torch_embedding,
+                        do_sample=False,
+                        num_beams=5,
+                        max_length=256,
+                        min_length=1,
+                        top_p=0.9,
+                        repetition_penalty=1.5,
+                        length_penalty=1.0,
+                        temperature=1,
+                    )
+                    generated_text = self.processor.batch_decode(
+                        outputs, skip_special_tokens=True
+                    )[0].strip()
+                    generated_texts.append((embedding.time, generated_text))
+                    # embedding = self.model(img)
+                    # embedding = torch.nn.functional.normalize(embedding, dim=-1)
+                    # embedding = embedding.cpu().detach()
 
             for shot in shots_data:
                 shot_texts = []

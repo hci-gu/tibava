@@ -76,6 +76,11 @@ class CosineSimilarity(
             tfs = np.asarray(tfs)
             qfs = np.asarray(qfs)
 
+            if tfs.ndim > 2:
+                tfs = tfs.reshape((tfs.shape[0], -1))
+            if qfs.ndim > 2:
+                qfs = qfs.reshape((qfs.shape[0], -1))
+
             cossim = 1 - cdist(tfs, qfs, "cosine")
             cossim = (cossim + 1) / 2
 

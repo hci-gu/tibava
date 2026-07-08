@@ -63,16 +63,37 @@ class AudioClassification(
         import numpy as np
         import json
 
-        # beats has to be downloaded from huggingface and cannot be installed via pip
-        sys.path.append("/models/audio_classification/")
-        from beats.BEATs import BEATs, BEATsConfig  # type: ignore
-
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-        def get_models() -> Tuple[BEATs, Dict[int, str]]:
-            checkpoint = torch.load(
+        def get_models():
+            # BEATs is an optional local asset bundle. Keep the plugin usable when
+            # the model directory has not been populated.
+            sys.path.append("/models/audio_classification/")
+            try:
+                from beats.BEATs import BEATs, BEATsConfig  # type: ignore
+            except ModuleNotFoundError:
+                logging.warning(
+                    "BEATs package not found under /models/audio_classification; "
+                    "using feature-based audio classification fallback."
+                )
+                return None, None
+
+            checkpoint_path = (
                 self.config.get("save_dir")
                 / "BEATs_iter3_plus_AS2M_finetuned_on_AS2M_cpt2.pt"
+            )
+            ontology_path = self.config.get("save_dir") / "ontology.json"
+            if not checkpoint_path.exists() or not ontology_path.exists():
+                logging.warning(
+                    "BEATs model assets are incomplete under %s; using "
+                    "feature-based audio classification fallback.",
+                    self.config.get("save_dir"),
+                )
+                return None, None
+
+            checkpoint = torch.load(
+                checkpoint_path,
+                map_location=device,
             )
             cfg = BEATsConfig(checkpoint["cfg"])
             BEATs_model = BEATs(cfg)
@@ -80,7 +101,7 @@ class AudioClassification(
             BEATs_model.to(device)
             BEATs_model.eval()
 
-            with open(self.config.get("save_dir") / "ontology.json", "r") as f:
+            with open(ontology_path, "r") as f:
                 data = json.load(f)
 
             idx_to_code = {v: k for k, v in checkpoint["label_dict"].items()}
@@ -91,6 +112,25 @@ class AudioClassification(
                     label_map[idx_to_code[entry["id"]]] = entry["name"]
 
             return BEATs_model, label_map
+
+        def classify_segment_fallback(
+            seg_audio_array: np.ndarray, sampling_rate: int
+        ) -> Tuple[str, float]:
+            if len(seg_audio_array) == 0:
+                return "Silence", 1.0
+
+            rms = float(np.sqrt(np.mean(np.square(seg_audio_array))))
+            if rms < 0.005:
+                return "Silence", 1.0
+
+            zcr = float(np.mean(librosa.feature.zero_crossing_rate(seg_audio_array)))
+            centroid = float(
+                np.mean(librosa.feature.spectral_centroid(y=seg_audio_array, sr=sampling_rate))
+            )
+
+            if zcr > 0.18 or centroid > 3500:
+                return "Noise", min(1.0, max(0.5, rms * 12))
+            return "Speech or Music", min(1.0, max(0.5, rms * 16))
 
         def aggregate_probs(
             top3_label_probs: List[Tuple[List[str], List[float]]],
@@ -143,57 +183,64 @@ class AudioClassification(
                     torch.tensor(seg_audio_array).unsqueeze(0).to(torch.float32)
                 )
 
-                if seg_audio_tensor.shape[1] < sampling_rate:
-                    seg_audio_tensor = torch.nn.functional.pad(
-                        seg_audio_tensor, (0, sampling_rate - seg_audio_tensor.shape[1])
+                if self.BEATs_model is None or self.label_map is None:
+                    label, prob = classify_segment_fallback(
+                        seg_audio_array, sampling_rate
                     )
-
-                ## Chop audio into further segments of 10 seconds if audio is longer than 10 seconds
-                if seg_audio_tensor.shape[1] > sampling_rate * 10:
-                    ceiling_len = (
-                        seg_audio_tensor.shape[1] // (sampling_rate * 10)
-                    ) * (sampling_rate * 10)
-                    audio_segments = torch.tensor(
-                        np.array(
-                            [
-                                seg_audio_tensor[:, i : i + sampling_rate * 10]
-                                for i in range(0, ceiling_len, sampling_rate * 10)
-                            ]
-                        )
-                    ).squeeze(
-                        1
-                    )  ## --> (N, 1600000)
+                    top3_label_probs = [(label, prob)]
                 else:
-                    audio_segments = seg_audio_tensor
-
-                audio_segments = audio_segments.to(device)
-
-                padding_mask = (
-                    torch.zeros(audio_segments.shape[0], audio_segments.shape[1])
-                    .bool()
-                    .to(device)
-                )
-
-                with torch.no_grad():
-                    probs = self.BEATs_model.extract_features(
-                        audio_segments, padding_mask=padding_mask
-                    )[0]
-
-                top3_label_probs = []
-                for i, (top3_label_prob, top3_label_idx) in enumerate(
-                    zip(*probs.topk(k=3))
-                ):
-                    top3_label_probs.append(
-                        (
-                            [
-                                self.label_map[label_idx.item()]
-                                for label_idx in top3_label_idx
-                            ],
-                            top3_label_prob.tolist(),
+                    if seg_audio_tensor.shape[1] < sampling_rate:
+                        seg_audio_tensor = torch.nn.functional.pad(
+                            seg_audio_tensor,
+                            (0, sampling_rate - seg_audio_tensor.shape[1]),
                         )
+
+                    ## Chop audio into further segments of 10 seconds if audio is longer than 10 seconds
+                    if seg_audio_tensor.shape[1] > sampling_rate * 10:
+                        ceiling_len = (
+                            seg_audio_tensor.shape[1] // (sampling_rate * 10)
+                        ) * (sampling_rate * 10)
+                        audio_segments = torch.tensor(
+                            np.array(
+                                [
+                                    seg_audio_tensor[:, i : i + sampling_rate * 10]
+                                    for i in range(0, ceiling_len, sampling_rate * 10)
+                                ]
+                            )
+                        ).squeeze(
+                            1
+                        )  ## --> (N, 1600000)
+                    else:
+                        audio_segments = seg_audio_tensor
+
+                    audio_segments = audio_segments.to(device)
+
+                    padding_mask = (
+                        torch.zeros(audio_segments.shape[0], audio_segments.shape[1])
+                        .bool()
+                        .to(device)
                     )
 
-                top3_label_probs = aggregate_probs(top3_label_probs)
+                    with torch.no_grad():
+                        probs = self.BEATs_model.extract_features(
+                            audio_segments, padding_mask=padding_mask
+                        )[0]
+
+                    top3_label_probs = []
+                    for i, (top3_label_prob, top3_label_idx) in enumerate(
+                        zip(*probs.topk(k=3))
+                    ):
+                        top3_label_probs.append(
+                            (
+                                [
+                                    self.label_map[label_idx.item()]
+                                    for label_idx in top3_label_idx
+                                ],
+                                top3_label_prob.tolist(),
+                            )
+                        )
+
+                    top3_label_probs = aggregate_probs(top3_label_probs)
                 segment_predictions.append(
                     Annotation(
                         start=segment.start,
