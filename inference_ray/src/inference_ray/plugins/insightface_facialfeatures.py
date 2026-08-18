@@ -103,6 +103,19 @@ class InsightfaceFeatureExtractor(AnalyserPlugin):
         self.model = None
         self.model_path = config.get("model_path")
 
+    def preload(self):
+        import onnx
+        import onnxruntime
+
+        if self.model is None:
+            self.model = onnx.load(self.model_path)
+            self.session = onnxruntime.InferenceSession(
+                self.model_path,
+                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+            )
+            self.input_name = self.session.get_inputs()[0].name
+            self.output_name = self.session.get_outputs()[0].name
+
     def estimate_norm(self, lmk, image_size=112, mode="arcface"):
         import cv2
 
@@ -142,18 +155,7 @@ class InsightfaceFeatureExtractor(AnalyserPlugin):
 
     def get_feat(self, imgs):
         import cv2
-        import onnx
-        import onnxruntime
-
-        if self.model is None:
-
-            self.model = onnx.load(self.model_path)
-            self.session = onnxruntime.InferenceSession(
-                self.model_path,
-                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-            )
-            self.input_name = self.session.get_inputs()[0].name
-            self.output_name = self.session.get_outputs()[0].name
+        self.preload()
 
         if not isinstance(imgs, list):
             imgs = [imgs]
@@ -239,8 +241,15 @@ class InsightfaceVideoFeatureExtractor(
     ) -> Dict[str, Data]:
         with inputs["video"] as video_data, inputs["kpss"] as kpss_data:
             kpss = kpss_data.kpss
+            if not kpss:
+                return self.get_facial_features(
+                    iterator=iter(()),
+                    num_faces=0,
+                    parameters=parameters,
+                    data_manager=data_manager,
+                    callbacks=callbacks,
+                )
             parameters["fps"] = 1 / kpss[0].delta_time
-            assert len(kpss) > 0
 
             faceid_lut = {}
             for kps in kpss:
@@ -330,7 +339,6 @@ class InsightfaceImageFeatureExtractor(
         ):
             kpss = kpss_data.kpss
             faces = faces_data.faces
-            assert len(kpss) > 0
 
             image_lut = {image.id: image for image in images_data}
             face_image_lut = {face.id: face.ref_id for face in faces}

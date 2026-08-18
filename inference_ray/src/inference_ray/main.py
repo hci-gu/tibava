@@ -12,6 +12,9 @@ class Deployment:
     def __init__(self, plugin: AnalyserPlugin, data_manager: DataManager) -> None:
         self.plugin = plugin
         self.data_manager = data_manager
+        preload = getattr(self.plugin, "preload", None)
+        if preload is not None:
+            preload()
 
     async def __call__(self, request) -> Dict[str, str]:
         data = await request.json()

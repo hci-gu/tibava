@@ -93,6 +93,15 @@ class AnalyserCacheWrapper:
                 parameters=parameters,
                 callbacks=callbacks,
             )
+            if not isinstance(results, dict):
+                logging.error(
+                    "[AnalyserPluginManager] %s plugin %s returned an invalid "
+                    "result payload: %r",
+                    run_id,
+                    plugin,
+                    results,
+                )
+                return None
             logging.info(
                 f"[AnalyserPluginManager] {run_id} results: {[{k:x} for k,x in results.items()]}"
             )
@@ -135,7 +144,7 @@ def run_plugin(args):
                 data = data_manager.load(data_in.get("id"))
                 if data is None:
                     logging.error(f"Data not found {data_in.get('id')}")
-                    return []
+                    return None
                 plugin_inputs[data_in.get("name")] = data
 
         plugin_parameters = {}
@@ -169,7 +178,7 @@ def run_plugin(args):
         )
         if results is None:
             logging.error(f"[Analyser] {params.get('plugin')} without results")
-            return []
+            return None
 
         result_map = []
         for key, id in results.items():

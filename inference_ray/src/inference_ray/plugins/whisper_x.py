@@ -98,7 +98,26 @@ class WhisperX(
         self.model = None
         self.diarize_model = None
         self.alignment_model = None
+        self.alignment_language = None
         self.model_name = self.config.get("model", "whisper_x")
+
+    def preload(self):
+        self._load_models()
+
+    def _load_models(self):
+        import torch
+        import whisperx
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if self.model is None:
+            self.model = whisperx.load_model(
+                "large-v3",
+                device=device,
+                compute_type="float16" if device.startswith("cuda") else "int8",
+            )
+        if self.diarize_model is None:
+            self.diarize_model = build_diarization_pipeline(whisperx, device)
+        self.device = device
 
     def call(
         self,
@@ -108,22 +127,10 @@ class WhisperX(
         callbacks: Callable = None,
     ) -> Dict[str, Data]:
         import librosa
-        import torch
         import whisperx
 
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        if self.model is None:
-            self.model = whisperx.load_model(
-                "large-v3",
-                device=device,
-                compute_type="int8",
-                language=parameters.get("language_code"),
-            )  # TODO originally compute_type="float16" but not supported by m1. probably change back for production
-            self.device = device
-
-        if self.diarize_model is None:
-            self.diarize_model = build_diarization_pipeline(whisperx, device)
-            self.device = device
+        self._load_models()
+        device = self.device
 
         with (
             inputs["audio"] as input_data,
@@ -135,17 +142,19 @@ class WhisperX(
                     audio=y, batch_size=8, language=parameters.get("language_code")
                 )
 
-                # always instantiate new alignment model to match current language
-                self.alignment_model, self.metadata = whisperx.load_align_model(
-                    language_code=transcription["language"], device=device
-                )
+                language = transcription["language"]
+                if self.alignment_model is None or self.alignment_language != language:
+                    self.alignment_model, self.metadata = whisperx.load_align_model(
+                        language_code=language, device="cpu"
+                    )
+                    self.alignment_language = language
 
                 aligned_transcription = whisperx.align(
                     transcription["segments"],
                     self.alignment_model,
                     self.metadata,
                     y,
-                    device,
+                    "cpu",
                     return_char_alignments=False,
                 )
 

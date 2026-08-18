@@ -40,6 +40,30 @@ class ShotAngle(
 ):
     def __init__(self, config=None, **kwargs):
         super().__init__(config, **kwargs)
+        self.model = None
+
+    def preload(self):
+        if self.model is not None:
+            return
+        import torch
+        from torchvision.transforms import v2
+        from transformers import AutoModelForImageClassification
+
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.transform = v2.Compose(
+            [
+                v2.Resize(384, antialias=True),
+                v2.CenterCrop((384, 384)),
+                v2.ToDtype(torch.float32, scale=True),
+                v2.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
+        self.model = AutoModelForImageClassification.from_pretrained(
+            "gullalc/convnextv2-base-22k-384-cinescale-angle"
+        ).to(self.device)
+        self.model.eval()
 
     def call(
         self,
@@ -50,32 +74,14 @@ class ShotAngle(
     ) -> Dict[str, Data]:
         import numpy as np
         import torch
-        from torchvision.transforms import v2
-        from transformers import AutoModelForImageClassification
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        transform = v2.Compose(
-            [
-                v2.Resize(384, antialias=True),
-                v2.CenterCrop((384, 384)),
-                v2.ToDtype(torch.float32, scale=True),
-                v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]
-        )
-
-        model = AutoModelForImageClassification.from_pretrained(
-            "gullalc/convnextv2-base-22k-384-cinescale-angle"
-        )
-        model.to(device)
-        model.eval()
+        self.preload()
 
         def get_probs(_batch: List[np.ndarray]) -> List[List[float]]:
             batch = torch.from_numpy(np.stack(_batch, axis=0))
             batch = batch.permute((0, 3, 1, 2))
-            inputs = transform(batch).to(device)
+            inputs = self.transform(batch).to(self.device)
             with torch.no_grad():
-                outputs = model(inputs).logits
+                outputs = self.model(inputs).logits
             return torch.softmax(outputs, dim=1).tolist()
 
         with inputs["video"] as video_data:
@@ -103,7 +109,7 @@ class ShotAngle(
                 if len(_batch):
                     probs.extend(get_probs(_batch))
 
-                index = list(model.config.id2label.values())
+                index = list(self.model.config.id2label.values())
                 for i, y in zip(index, zip(*probs)):
                     with probs_data.create_data("ScalarData", index=i) as scalar_data:
                         scalar_data.y = np.asarray(y)

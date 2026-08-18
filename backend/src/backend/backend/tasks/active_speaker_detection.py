@@ -72,16 +72,19 @@ class ActiveSpeakerDetection(Task):
         if audio_result is None:
             raise Exception
 
-        shots_id = None
+        shots = manager.create_data("ShotsData")
+        with shots:
+            shots.shots.append(Shot(start=0, end=video.duration))
+
         if parameters.get("shot_timeline_id"):
             shot_timeline_segments = TimelineSegment.objects.filter(
                 timeline__id=parameters.get("shot_timeline_id")
             )
-            shots = manager.create_data("ShotsData")
             with shots:
+                shots.shots.clear()
                 for x in shot_timeline_segments:
                     shots.shots.append(Shot(start=x.start, end=x.end))
-            shots_id = client.upload_data(shots)
+        shots_id = client.upload_data(shots)
 
         if plugin_run is not None:
             plugin_run.progress = 0.5

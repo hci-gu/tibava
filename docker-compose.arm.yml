@@ -16,7 +16,7 @@ services:
       <<: *arm_uv_env
       HF_HOME: /models
       NUMBA_CACHE_DIR: /tmp
-    command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package inference_ray serve run inference_ray/deploy.yml
+    command: uv run --locked --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package inference_ray serve run inference_ray/deploy.yml
 
   analyser:
     image: tibava-arm-uv:latest
@@ -25,7 +25,7 @@ services:
       dockerfile: Dockerfile.arm-uv
     environment:
       <<: *arm_uv_env
-    command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package analyser analyser/src/analyser/server.py -v -c analyser/config.yml
+    command: uv run --locked --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package analyser analyser/src/analyser/server.py -v -c analyser/config.yml
 
   celery:
     image: tibava-arm-uv:latest
@@ -35,7 +35,7 @@ services:
     environment:
       <<: *arm_uv_env
       TIBAVA_BACKEND_CONFIG: /app/backend/src/backend/config.json
-    command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package backend celery -A tibava worker -l INFO
+    command: uv run --locked --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package backend celery -A tibava worker -l INFO
 
   backend:
     image: tibava-arm-uv:latest
@@ -45,4 +45,4 @@ services:
     environment:
       <<: *arm_uv_env
       TIBAVA_BACKEND_CONFIG: /app/backend/src/backend/config.json
-    command: uv run --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000
+    command: uv run --locked --no-python-downloads --no-managed-python --python /usr/local/bin/python3.12 --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000

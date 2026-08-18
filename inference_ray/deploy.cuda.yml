@@ -100,7 +100,7 @@ applications:
             pip:
               - "open-clip-torch==2.24.0"
               - git+https://github.com/SpringsteinM/imageio.git
-              - torch>=2.6.0
+              - torch==2.11.0
               - scikit-learn==1.4.0
               - transformers==4.37.2
   - name: clip_text_embedding
@@ -123,7 +123,7 @@ applications:
             pip:
               - "open-clip-torch==2.24.0"
               - git+https://github.com/SpringsteinM/imageio.git
-              - torch>=2.6.0
+              - torch==2.11.0
               - scikit-learn==1.4.0
               - transformers==4.37.2
   - name: clip_ontology_probs
@@ -146,7 +146,7 @@ applications:
             pip:
               - "open-clip-torch==2.24.0"
               - git+https://github.com/SpringsteinM/imageio.git
-              - torch>=2.6.0
+              - torch==2.11.0
               - scikit-learn==1.4.0
               - transformers==4.37.2
   - name: clip_probs
@@ -169,7 +169,7 @@ applications:
             pip:
               - "open-clip-torch==2.24.0"
               - git+https://github.com/SpringsteinM/imageio.git
-              - torch>=2.6.0
+              - torch==2.11.0
               - scikit-learn==1.4.0
               - transformers==4.37.2
   - name: color_analyser
@@ -237,15 +237,15 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
-          max_replicas: 20
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
-          num_gpus: 0.1
+          num_gpus: 0.05
           runtime_env:
             uv:
               - scikit-learn==1.4.0
               - opencv-python-headless==4.9.0.80
-              - torch>=2.6.0
+              - torch==2.11.0
   - name: insightface_image_detector_torch
     route_prefix: /insightface_image_detector_torch
     import_path: inference_ray.main:app_builder
@@ -265,7 +265,7 @@ applications:
             uv:
               - scikit-learn==1.4.0
               - opencv-python-headless==4.9.0.80
-              - torch>=2.6.0
+              - torch==2.11.0
   - name: insightface_facesize
     route_prefix: /insightface_facesize
     import_path: inference_ray.main:app_builder
@@ -294,10 +294,10 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
-          max_replicas: 20
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
-          num_gpus: 0.1
+          num_gpus: 0.05
           runtime_env:
             uv:
               - scikit-learn==1.4.0
@@ -358,7 +358,7 @@ applications:
             uv:
               - scikit-learn==1.4.0
               - opencv-python-headless==4.9.0.80
-              - torch>=2.6.0
+              - torch==2.11.0
 
   - name: scalar_threshold
     route_prefix: /scalar_threshold
@@ -430,7 +430,7 @@ applications:
           num_gpus: 0.1
           runtime_env:
             uv:
-              - torch>=2.6.0
+              - torch==2.11.0
   - name: thumbnail_generator
     route_prefix: /thumbnail_generator
     import_path: inference_ray.main:app_builder
@@ -461,7 +461,7 @@ applications:
         ray_actor_options:
           runtime_env:
             pip:
-              - torch>=2.6.0
+              - torch==2.11.0
 
   - name: video_to_video
     route_prefix: /video_to_video
@@ -549,7 +549,7 @@ applications:
           runtime_env:
             uv:
               - librosa==0.10.1
-              - torch>=2.6.0
+              - torch==2.11.0
               - scikit-learn==1.4.0
               - transformers==4.37.2
 
@@ -711,15 +711,15 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
-          max_replicas: 20
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           # num_cpus: 2
           num_gpus: 0.1
           runtime_env:
             pip:
               - git+https://github.com/SpringsteinM/imageio.git
-              - torch>=2.6.0
+              - torch==2.11.0
               - pillow
               - scikit-learn==1.4.0
               - transformers==4.37.2
@@ -737,18 +737,19 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
-          max_replicas: 20
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           # num_cpus: 2
           num_gpus: 0.1
           runtime_env:
             pip:
               - git+https://github.com/SpringsteinM/imageio.git
-              - torch>=2.6.0
+              - torch==2.11.0
               - pillow
               - scikit-learn==1.4.0
               - transformers==4.37.2
+              - sentencepiece
               - accelerate
               - bitsandbytes
               - peft
@@ -802,8 +803,8 @@ applications:
         - opencv-python-headless
         - onnxruntime-gpu==1.21.1
         - onnx
-        - torch
-        - torchvision
+        - torch==2.11.0
+        - torchvision==0.26.0
         - pytorch-lightning
         - timm
         - nltk
@@ -817,7 +818,7 @@ applications:
         autoscaling_config:
           min_replicas: 1
         ray_actor_options:
-          num_gpus: 0.2
+          num_gpus: 0.1
 
   - name: face_tracking
     route_prefix: /face_tracking
@@ -829,7 +830,8 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           num_cpus: 2
           runtime_env:
@@ -846,13 +848,15 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           num_cpus: 2
+          num_gpus: 0.05
           runtime_env:
             pip:
-              - torch>=2.6.0
-              - torchvision
+              - torch==2.11.0
+              - torchvision==0.26.0
               - transformers
   - name: shot_level
     route_prefix: /shot_level
@@ -864,13 +868,15 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           num_cpus: 2
+          num_gpus: 0.05
           runtime_env:
             pip:
-              - torch>=2.6.0
-              - torchvision
+              - torch==2.11.0
+              - torchvision==0.26.0
               - transformers
   - name: shot_scale_and_movement
     route_prefix: /shot_scale_and_movement
@@ -882,13 +888,15 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           num_cpus: 2
+          num_gpus: 0.05
           runtime_env:
             pip:
-              - torch>=2.6.0
-              - torchvision
+              - torch==2.11.0
+              - torchvision==0.26.0
               - transformers
   - name: whisper_x
     route_prefix: /whisper_x
@@ -900,17 +908,15 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           num_cpus: 2
+          num_gpus: 0.1
           runtime_env:
-            pip:
-              - git+https://github.com/m-bain/whisperx.git
-              - librosa==0.10.1
-              - setuptools<81
-              - torch>=2.6.0
-              - scikit-learn>=1.6.1
-              - transformers>=4.48.3
+            env_vars:
+              PYTHONPATH: /opt/whisperx/lib/python3.12/site-packages
+              LD_LIBRARY_PATH: /opt/whisperx/lib/python3.12/site-packages/nvidia/cudnn/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/cublas/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/cufft/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/curand/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/cusolver/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/cusparse/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/nvjitlink/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/nccl/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/nvtx/lib:/opt/whisperx/lib/python3.12/site-packages/nvidia/cuda_cupti/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
   - name: audio_emotion
     route_prefix: /audio_emotion
     import_path: inference_ray.main:app_builder
@@ -921,13 +927,15 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           num_cpus: 2
+          num_gpus: 0.05
           runtime_env:
             pip:
               - librosa==0.10.1
-              - torch>=2.6.0
+              - torch==2.11.0
               - transformers>=4.48.3
               - speechbrain==1.0.2
               - setuptools<81
@@ -947,7 +955,7 @@ applications:
           runtime_env:
             pip:
               - librosa==0.10.1
-              - torch>=2.6.0
+              - torch==2.11.0
               - transformers>=4.48.3
               - speechbrain==1.0.2
               - setuptools<81
@@ -961,13 +969,15 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           num_cpus: 2
+          num_gpus: 0.05
           runtime_env:
             pip:
               - librosa==0.10.1
-              - torch>=2.6.0
+              - torch==2.11.0
               - python_speech_features
               - scipy
               - opencv-python-headless
@@ -983,14 +993,17 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
           num_cpus: 2
+          num_gpus: 0.05
           runtime_env:
             pip:
               - librosa==0.10.1
-              - torch>=2.6.0
-              - torchaudio # TODO specify version
+              - torch==2.11.0
+              - torchaudio==2.11.0
+              - transformers>=4.48.3
               - setuptools<81
   - name: text_ner
     route_prefix: /text_ner
@@ -1040,7 +1053,7 @@ applications:
           num_cpus: 2
           runtime_env:
             pip:
-              - torch>=2.6.0
+              - torch==2.11.0
               - transformers>=4.48.3
               - germansentiment==1.1.0
   - name: nano_ocr_video
@@ -1048,9 +1061,9 @@ applications:
     import_path: inference_ray.main:app_builder
     runtime_env:
       pip:
-        - transformers>=4.54.0
+        - transformers==4.54.1
         - accelerate>=1.9.0
-        - torchvision>=0.22.1
+        - torchvision==0.26.0
         - hqq
         - torchao
     args:
@@ -1059,6 +1072,7 @@ applications:
     deployments:
       - name: Deployment
         autoscaling_config:
-          min_replicas: 0
+          min_replicas: 1
+          max_replicas: 1
         ray_actor_options:
-          num_gpus: 0.2
+          num_gpus: 0.1

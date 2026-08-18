@@ -358,7 +358,7 @@ class OCRTextDetectorONNX(AnalyserPlugin):
 
             self.textdet_model = onnx.load(self.textdet_model_path)
             self.session = onnxruntime.InferenceSession(
-                self.textdet_model_path, providers=["CUDAExecutionProvider"]
+                self.textdet_model_path, providers=["CPUExecutionProvider"]
             )
             self.input_name = self.session.get_inputs()[0].name
             self.output_name = self.session.get_outputs()[0].name

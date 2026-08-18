@@ -66,6 +66,8 @@ class PluginManager:
 
         if plugin in self._parser:
             parameters = self._parser[plugin]()(parameters)
+            if parameters is None:
+                return {"status": False}
         else:
             parameters = {}
 
@@ -114,7 +116,7 @@ class PluginManager:
                     result["result"] = plugin_result
 
             except Exception:
-                logger.exception(f"Failed to run plugin {plugin_run.type}")
+                logger.exception(f"Failed to run plugin {plugin}")
 
                 if plugin_run is not None:
                     plugin_run.status = PluginRun.STATUS_ERROR

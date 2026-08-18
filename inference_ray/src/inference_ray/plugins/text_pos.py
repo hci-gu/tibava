@@ -87,6 +87,7 @@ class PoSTagging(
             language_code: str,
         ) -> stanza.Pipeline:
             nlp = stanza.Pipeline(
+                download_method=stanza.DownloadMethod.REUSE_RESOURCES,
                 lang=language_code,
                 dir=str(self.config.get("save_dir")),
                 processors="tokenize,pos",

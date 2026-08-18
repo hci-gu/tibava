@@ -52,6 +52,29 @@ class ActiveSpeakerDetection(
 ):
     def __init__(self, config=None, **kwargs):
         super().__init__(config, **kwargs)
+        self.model = None
+        self.device = None
+
+    def preload(self):
+        if self.model is not None:
+            return
+
+        import torch
+
+        model_root = Path(self.config["save_dir"]) / "Light-ASD"
+        sys.path.insert(0, str(model_root))
+        from ASD import ASD  # type: ignore
+
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = ASD()
+        model_name = (
+            "finetuning_TalkSet.model"
+            if self.config["model"] == "talkset"
+            else "pretrain_AVA_CVPR.model"
+        )
+        self.model.loadParameters(model_root / "weight" / model_name)
+        self.model.to(self.device)
+        self.model.eval()
 
     def call(
         self,
@@ -66,26 +89,8 @@ class ActiveSpeakerDetection(
         import python_speech_features
         import cv2
 
-        sys.path.append("/models/asd/Light-ASD")
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        try:
-            from ASD import ASD  # type: ignore
-
-            model = ASD()
-            model_path = (
-                "Light-ASD/weight/finetuning_TalkSet.model"
-                if default_config["model"] == "talkset"
-                else "Light-ASD/weight/pretrain_AVA_CVPR.model"
-            )
-            model.loadParameters(default_config["save_dir"] / model_path)
-            model.to(device)
-            model.eval()
-        except Exception:
-            logging.exception(
-                "Light-ASD model is unavailable; returning non-speaking face tracks"
-            )
-            model = None
+        self.preload()
+        model = self.model
 
         with (
             inputs["video"] as video_data,
@@ -93,34 +98,6 @@ class ActiveSpeakerDetection(
             inputs["face_tracks"] as face_tracks,
             data_manager.create_data("AnnotationData") as speaker_tracks,
         ):
-            if model is None:
-                for track in face_tracks.annotations:
-                    track_data = track.labels[0] if track.labels else {}
-                    speaker_tracks.annotations.append(
-                        Annotation(
-                            start=track.start,
-                            end=track.end,
-                            labels=[
-                                {
-                                    "track_id": track_data.get("track_id"),
-                                    "frames": track_data.get("frames", []),
-                                    "bbox": track_data.get("bboxes", []),
-                                    "is_speaking": False,
-                                    "speaking_ratio": 0.0,
-                                    "speaking_frames": 0,
-                                    "mean_score": None,
-                                    "original_scores": [],
-                                    "smoothed_scores": [],
-                                    "fallback_reason": "Light-ASD model unavailable",
-                                }
-                            ],
-                        )
-                    )
-
-                return {
-                    "speaker_tracks": speaker_tracks,
-                }
-
             with (
                 audio_data.open_audio("r") as audio_file,
                 video_data.open_video() as video_file,
@@ -205,7 +182,7 @@ class ActiveSpeakerDetection(
                                         ]
                                     )
                                     .unsqueeze(0)
-                                    .to(device)
+                                    .to(self.device)
                                 )
                                 inputV = (
                                     torch.FloatTensor(
@@ -220,17 +197,17 @@ class ActiveSpeakerDetection(
                                         ]
                                     )
                                     .unsqueeze(0)
-                                    .to(device)
+                                    .to(self.device)
                                 )
 
                                 if inputA.size(1) == 0 and inputV.size(1) != 0:
                                     inputA = torch.zeros(
                                         (1, inputV.size(1) * 4, inputA.size(2))
-                                    ).to(device)
+                                    ).to(self.device)
                                 elif inputV.size(1) == 0 and inputA.size(1) != 0:
                                     inputV = torch.zeros(
                                         (1, inputA.size(1) // 4, 112, 112)
-                                    ).to(device)
+                                    ).to(self.device)
                                 elif inputA.size(1) == 0 and inputV.size(1) == 0:
                                     logging.warning(
                                         f"Skipping batch {i} due to both inputs being empty"
@@ -247,7 +224,7 @@ class ActiveSpeakerDetection(
                                         embedA.size(0),
                                         max_length - embedA.size(1),
                                         embedA.size(2),
-                                    ).to(device)
+                                    ).to(self.device)
                                     embedA = torch.cat([embedA, padding], dim=1)
 
                                 if embedV.size(1) < max_length:
@@ -255,7 +232,7 @@ class ActiveSpeakerDetection(
                                         embedV.size(0),
                                         max_length - embedV.size(1),
                                         embedV.size(2),
-                                    ).to(device)
+                                    ).to(self.device)
                                     embedV = torch.cat([embedV, padding], dim=1)
 
                                 out = model.model.forward_audio_visual_backend(
@@ -326,21 +303,28 @@ class ActiveSpeakerDetection(
         frame_height = frames[0].shape[0]
         bbox_scaling = np.array([frame_width, frame_height, frame_width, frame_height])
         dets = {"x": [], "y": [], "s": []}
-        for det in bboxes:
-            det *= bbox_scaling
+        for raw_det in bboxes:
+            det = np.asarray(raw_det, dtype=np.float32) * bbox_scaling
             dets["s"].append(max((det[3] - det[1]), (det[2] - det[0])) / 2)
             dets["y"].append((det[1] + det[3]) / 2)
             dets["x"].append((det[0] + det[2]) / 2)
 
-        dets["s"] = np.array(signal.medfilt(dets["s"], kernel_size=13))
-        dets["x"] = np.array(signal.medfilt(dets["x"], kernel_size=13))
-        dets["y"] = np.array(signal.medfilt(dets["y"], kernel_size=13))
+        sample_count = len(dets["s"])
+        kernel_size = min(13, sample_count if sample_count % 2 else sample_count - 1)
+        kernel_size = max(kernel_size, 1)
+        for key in ("s", "x", "y"):
+            values = np.asarray(dets[key])
+            dets[key] = (
+                signal.medfilt(values, kernel_size=kernel_size)
+                if kernel_size > 1
+                else values
+            )
 
         cropped_video_frames = []
         for fidx, frame in enumerate(frames):
             image = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-            bs = dets["s"][fidx]
+            bs = max(float(dets["s"][fidx]), 1.0)
             my = dets["y"][fidx]
             mx = dets["x"][fidx]
 

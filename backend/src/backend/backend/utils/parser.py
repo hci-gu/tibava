@@ -15,8 +15,8 @@ class Parser:
 
         task_parameter = {}
         for k, v in self.valid_parameter.items():
-            if v.get("default"):
-                task_parameter[k] = v.get("default")
+            if "default" in v:
+                task_parameter[k] = v["default"]
 
         for p in parameters:
             if p["name"] not in self.valid_parameter:

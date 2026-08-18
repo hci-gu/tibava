@@ -102,8 +102,10 @@ class NanoOCRTask(Task):
                         end=annotation.end,
                     )
                     for label in annotation.labels:
+                        label_text = str(label)
+                        max_length = Annotation._meta.get_field("name").max_length
                         annotation_db, _ = Annotation.objects.get_or_create(
-                            name=str(label),
+                            name=label_text[:max_length],
                             video=video,
                             category=category_db,
                             owner=user,

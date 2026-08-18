@@ -75,7 +75,7 @@ class PlacesClassifier(Task):
         # upload all data
         video_id = self.upload_video(client, video)
 
-        shots_id = None
+        shots = manager.create_data("ShotsData")
         if parameters.get("shot_timeline_id"):
             shot_timeline_db = Timeline.objects.get(
                 id=parameters.get("shot_timeline_id")
@@ -84,11 +84,13 @@ class PlacesClassifier(Task):
                 timeline=shot_timeline_db
             )
 
-            shots = manager.create_data("ShotsData")
             with shots:
                 for x in shot_timeline_segments:
                     shots.shots.append(Shot(start=x.start, end=x.end))
-            shots_id = client.upload_data(shots)
+        else:
+            with shots:
+                shots.shots.append(Shot(start=0, end=video.duration))
+        shots_id = client.upload_data(shots)
 
         # start plugins
         result = self.run_analyser(
@@ -118,21 +120,17 @@ class PlacesClassifier(Task):
 
         with transaction.atomic():
             result_annotations = {}
-            if shots_id:
-                for key, data_id in result[0].items():
-                    result_annotations[key] = None
-
-                    annotation_result = self.run_analyser(
-                        client,
-                        "shot_annotator",
-                        parameters={
-                            "fps": parameters.get("fps"),
-                        },
-                        inputs={"shots": shots_id, "probs": data_id},
-                        downloads=["annotations"],
-                    )
-
-                    result_annotations[key] = annotation_result[1]["annotations"]
+            for key, data_id in result[0].items():
+                annotation_result = self.run_analyser(
+                    client,
+                    "shot_annotator",
+                    parameters={"fps": parameters.get("fps")},
+                    inputs={"shots": shots_id, "probs": data_id},
+                    downloads=["annotations"],
+                )
+                if annotation_result is None:
+                    raise RuntimeError(f"Could not annotate {key}")
+                result_annotations[key] = annotation_result[1]["annotations"]
             annotation_timeline = Timeline.objects.create(
                 video=video,
                 name=parameters.get("timeline"),

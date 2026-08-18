@@ -74,16 +74,18 @@ class InsightfaceFacesize(Task):
         # upload all data
         video_id = self.upload_video(client, video)
 
-        shots_id = None
+        shots = manager.create_data("ShotsData")
         if parameters.get("shot_timeline_id"):
             shot_timeline_segments = TimelineSegment.objects.filter(
                 timeline__id=parameters.get("shot_timeline_id")
             )
-            shots = manager.create_data("ShotsData")
             with shots:
                 for x in shot_timeline_segments:
                     shots.shots.append(Shot(start=x.start, end=x.end))
-            shots_id = client.upload_data(shots)
+        else:
+            with shots:
+                shots.shots.append(Shot(start=0, end=video.duration))
+        shots_id = client.upload_data(shots)
 
         # start plugins
         shot_type_results = self.run_analyser(
@@ -112,7 +114,7 @@ class InsightfaceFacesize(Task):
             plugin_run.save()
 
         if shot_size_annotation is None:
-            raise Exception
+            raise RuntimeError("Could not annotate shot sizes")
 
         facedetector_result = self.run_analyser(
             client,
@@ -123,6 +125,9 @@ class InsightfaceFacesize(Task):
             inputs={"video": video_id},
             outputs=["images", "kpss", "faces", "bboxes"],
         )
+
+        if facedetector_result is None:
+            raise RuntimeError("Face detection failed")
 
         if plugin_run is not None:
             plugin_run.progress = 0.75

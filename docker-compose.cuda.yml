@@ -1,16 +1,26 @@
 services:
   inference_ray:
     image: tibava-cuda-uv:latest
+    restart: unless-stopped
+    shm_size: "10gb"
     build:
       context: .
       dockerfile: Dockerfile.cuda-uv
 
     environment:
       HF_HOME: /models
+      NLTK_DATA: /models/nltk_data
       HF_HUB_DISABLE_XET: "1"
       HF_TOKEN: ${HF_TOKEN}
       HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN}
-      NUMBA_CACHE_DIR: /tmp
+      NUMBA_CACHE_DIR: /root/.cache/numba
+      XDG_CACHE_HOME: /root/.cache
+      UV_CACHE_DIR: /root/.cache/uv
+      PIP_CACHE_DIR: /root/.cache/pip
+      TORCH_HOME: /root/.cache/torch
+      RAY_DASHBOARD_ADDRESS: http://localhost:52365
+      RAY_RUNTIME_ENV_PIP_CACHE_SIZE_GB: "40"
+      RAY_RUNTIME_ENV_UV_CACHE_SIZE_GB: "40"
       UV_PYTHON_DOWNLOADS: never
       UV_NO_MANAGED_PYTHON: "1"
       UV_PYTHON: /usr/local/bin/python3.12
@@ -32,21 +42,44 @@ services:
         source: ./analyser
         target: /app/analyser
       - type: bind
-        source: ./packages
-        target: /app/packages
-      - type: bind
         source: ./backend
         target: /app/backend
+      - type: bind
+        source: ./packages
+        target: /app/packages
       - type: bind
         source: ./pyproject.toml
         target: /app/pyproject.toml
       - type: bind
+        source: ./uv.lock
+        target: /app/uv.lock
+      - type: bind
         source: ./.python-version
         target: /app/.python-version
+      - type: volume
+        source: workspace_venv
+        target: /app/.venv
+      - type: volume
+        source: python_cache
+        target: /root/.cache
+      - type: volume
+        source: ray_runtime_cache
+        target: /var/cache/ray/runtime_resources
+      - type: volume
+        source: whisperx_env
+        target: /opt/whisperx
+        read_only: true
 
     working_dir: /app/
 
-    command: uv run --package inference_ray serve run inference_ray/deploy.cuda.yml
+    command: uv run --locked --package inference_ray sh inference_ray/start-cuda-serve.sh
+
+    healthcheck:
+      test: ["CMD", ".venv/bin/python", "inference_ray/check-ready.py"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 30s
 
     deploy:
       resources:
@@ -58,6 +91,7 @@ services:
 
   analyser:
     image: tibava-cuda-uv:latest
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile.cuda-uv
@@ -75,6 +109,9 @@ services:
         source: ./analyser
         target: /app/analyser
       - type: bind
+        source: ./backend
+        target: /app/backend
+      - type: bind
         source: ./packages
         target: /app/packages
       - type: bind
@@ -90,15 +127,31 @@ services:
         source: ./pyproject.toml
         target: /app/pyproject.toml
       - type: bind
+        source: ./uv.lock
+        target: /app/uv.lock
+      - type: bind
         source: ./.python-version
         target: /app/.python-version
+      - type: volume
+        source: workspace_venv
+        target: /app/.venv
+      - type: volume
+        source: python_cache
+        target: /root/.cache
 
     working_dir: /app/
 
-    command: uv run --package analyser analyser/src/analyser/server.py -v -c analyser/config.yml
+    command: uv run --locked --package analyser analyser/src/analyser/server.py -v -c analyser/config.yml
+
+    depends_on:
+      inference_ray:
+        condition: service_healthy
+      valkey:
+        condition: service_started
 
   postgres:
     image: postgres:14.17
+    restart: unless-stopped
     volumes:
       - ./data/db/:/var/lib/postgresql/data
     environment:
@@ -108,16 +161,27 @@ services:
 
   memcached:
     image: memcached:1.6.10-buster
+    restart: unless-stopped
     command: -I 32m
 
   valkey:
     image: valkey/valkey:8.1.1-alpine
-    command: /usr/local/bin/valkey-server --port 6380 --bind 0.0.0.0
+    restart: unless-stopped
+    command: >-
+      /usr/local/bin/valkey-server
+      --port 6380
+      --bind 0.0.0.0
+      --appendonly yes
+      --appendfsync everysec
+      --dir /data
+    volumes:
+      - valkey_data:/data
     ports:
       - "127.0.0.1:6380:6380"
 
   celery:
     image: tibava-cuda-uv:latest
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile.cuda-uv
@@ -151,8 +215,17 @@ services:
         source: ./pyproject.toml
         target: /app/pyproject.toml
       - type: bind
+        source: ./uv.lock
+        target: /app/uv.lock
+      - type: bind
         source: ./.python-version
         target: /app/.python-version
+      - type: volume
+        source: workspace_venv
+        target: /app/.venv
+      - type: volume
+        source: python_cache
+        target: /root/.cache
 
     depends_on:
       - postgres
@@ -163,10 +236,11 @@ services:
       UV_PYTHON_DOWNLOADS: never
       UV_NO_MANAGED_PYTHON: "1"
       UV_PYTHON: /usr/local/bin/python3.12
-    command: uv run --package backend celery -A tibava worker -l INFO
+    command: uv run --locked --package backend celery -A tibava worker -l INFO
 
   backend:
     image: tibava-cuda-uv:latest
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile.cuda-uv
@@ -202,8 +276,17 @@ services:
         source: ./pyproject.toml
         target: /app/pyproject.toml
       - type: bind
+        source: ./uv.lock
+        target: /app/uv.lock
+      - type: bind
         source: ./.python-version
         target: /app/.python-version
+      - type: volume
+        source: workspace_venv
+        target: /app/.venv
+      - type: volume
+        source: python_cache
+        target: /root/.cache
 
     working_dir: /app/
     environment:
@@ -211,7 +294,7 @@ services:
       UV_PYTHON_DOWNLOADS: never
       UV_NO_MANAGED_PYTHON: "1"
       UV_PYTHON: /usr/local/bin/python3.12
-    command: uv run --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000
+    command: uv run --locked --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000
 
     depends_on:
       - postgres
@@ -220,6 +303,7 @@ services:
 
   frontend:
     image: frontend
+    restart: unless-stopped
     expose:
       - "80"
     build:
@@ -238,6 +322,7 @@ services:
 
   caddy:
     image: caddy:2
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
@@ -254,3 +339,16 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  valkey_data:
+  workspace_venv:
+    name: tibava_workspace_venv
+    external: true
+  python_cache:
+    name: tibava_python_cache
+    external: true
+  ray_runtime_cache:
+    name: tibava_ray_runtime_cache
+    external: true
+  whisperx_env:
+    name: tibava_whisperx_env
+    external: true

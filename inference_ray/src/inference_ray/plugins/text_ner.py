@@ -436,8 +436,9 @@ class NamedEntityRecognition(
         def get_models(
             language_code: str,
         ) -> Tuple[stanza.Pipeline, List[str], List[str]]:
-            logging.error(f"{language_code=}")
+            logging.info(f"{language_code=}")
             nlp = stanza.Pipeline(
+                download_method=stanza.DownloadMethod.REUSE_RESOURCES,
                 lang=language_code,
                 dir=str(self.config.get("save_dir")),
                 processors="tokenize,ner",

@@ -5,6 +5,23 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase
 
 from backend.utils.upload import check_extension, download_file, get_file_extension
+from backend.utils.parser import Parser
+
+
+class ParserDefaultTests(SimpleTestCase):
+    def test_preserves_falsy_defaults(self):
+        parser = Parser()
+        parser.valid_parameter = {
+            "none": {"default": None},
+            "false": {"default": False},
+            "zero": {"default": 0},
+            "empty": {"default": ""},
+        }
+
+        self.assertEqual(
+            parser([]),
+            {"none": None, "false": False, "zero": 0, "empty": ""},
+        )
 
 
 class UploadExtensionTests(SimpleTestCase):

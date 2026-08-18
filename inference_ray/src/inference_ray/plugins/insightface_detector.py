@@ -103,6 +103,15 @@ class InsightfaceDetectorTorch(AnalyserPlugin):
         self.model_path = self.config.get("model_path")
         self.model = None
 
+    def preload(self):
+        import torch
+
+        if self.model is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.model = torch.jit.load(
+                self.model_path, map_location=torch.device(self.device)
+            )
+
     def forward_nms(self, data, det_thresh, nms_thresh):
         import torch
 
@@ -199,13 +208,7 @@ class InsightfaceDetectorTorch(AnalyserPlugin):
         import cv2
         import torch
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        if self.model is None:
-            self.model = torch.jit.load(
-                self.model_path, map_location=torch.device(device)
-            )
-            self.device = device
+        self.preload()
 
         img = frame.get("frame")
         im_ratio = float(img.shape[0]) / img.shape[1]

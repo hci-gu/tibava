@@ -4,6 +4,7 @@ services:
 
     environment:
       - HF_HOME=/models
+      - NLTK_DATA=/models/nltk_data
       - NUMBA_CACHE_DIR=/tmp
 
     volumes:
@@ -23,21 +24,24 @@ services:
         source: ./analyser
         target: /app/analyser
       - type: bind
-        source: ./packages
-        target: /app/packages
-      - type: bind
         source: ./backend
         target: /app/backend
       - type: bind
+        source: ./packages
+        target: /app/packages
+      - type: bind
         source: ./pyproject.toml
         target: /app/pyproject.toml
+      - type: bind
+        source: ./uv.lock
+        target: /app/uv.lock
       - type: bind
         source: ./.python-version
         target: /app/.python-version
 
     working_dir: /app/
 
-    command: uv run --package inference_ray serve run inference_ray/deploy.yml
+    command: uv run --locked --package inference_ray serve run inference_ray/deploy.yml
     # command: ls inference_ray/deploy.yml
 
   analyser:
@@ -50,6 +54,9 @@ services:
       - type: bind
         source: ./analyser
         target: /app/analyser
+      - type: bind
+        source: ./backend
+        target: /app/backend
       - type: bind
         source: ./packages
         target: /app/packages
@@ -66,12 +73,15 @@ services:
         source: ./pyproject.toml
         target: /app/pyproject.toml
       - type: bind
+        source: ./uv.lock
+        target: /app/uv.lock
+      - type: bind
         source: ./.python-version
         target: /app/.python-version
 
     working_dir: /app/
 
-    command: uv run --package analyser analyser/src/analyser/server.py -v -c analyser/config.yml
+    command: uv run --locked --package analyser analyser/src/analyser/server.py -v -c analyser/config.yml
 
   postgres:
     image: postgres:14.17
@@ -124,6 +134,9 @@ services:
         source: ./pyproject.toml
         target: /app/pyproject.toml
       - type: bind
+        source: ./uv.lock
+        target: /app/uv.lock
+      - type: bind
         source: ./.python-version
         target: /app/.python-version
 
@@ -137,7 +150,7 @@ services:
       # - GRPC_POLL_STRATEGY=poll
       # - GRPC_VERBOSITY=debug
       # - GRPC_TRACE=all
-    command: uv run --package backend celery -A tibava worker -l INFO
+    command: uv run --locked --package backend celery -A tibava worker -l INFO
 
   backend:
     image: ghcr.io/astral-sh/uv:debian
@@ -173,13 +186,16 @@ services:
         source: ./pyproject.toml
         target: /app/pyproject.toml
       - type: bind
+        source: ./uv.lock
+        target: /app/uv.lock
+      - type: bind
         source: ./.python-version
         target: /app/.python-version
 
     working_dir: /app/
     environment:
       - TIBAVA_BACKEND_CONFIG=/app/backend/src/backend/config.json
-    command: uv run --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000
+    command: uv run --locked --package backend python3 backend/src/backend/manage.py runserver 0.0.0.0:8000
 
     depends_on:
       - postgres

@@ -64,15 +64,10 @@ class NanoOCRVideo(
 
     def init_model(self):
         if self.model is None:
-            try:
-                self._init_model()
-            except Exception as exc:
-                logging.exception(
-                    "Nano OCR model initialization failed; returning empty OCR "
-                    "annotations for this run."
-                )
-                self.model_error = str(exc)
-                self.model = False
+            self._init_model()
+
+    def preload(self):
+        self.init_model()
 
     def _init_model(self):
         from transformers import (
@@ -82,10 +77,6 @@ class NanoOCRVideo(
             HqqConfig,
         )
         import torch
-        from hqq.utils.patching import prepare_for_inference
-        from hqq.core.quantize import HQQLinear, HQQBackend
-
-        # HQQLinear.set_backend(HQQBackend.PYTORCH_COMPILE)  # Compiled Pytorch
 
         quant_config = HqqConfig(nbits=4, group_size=64)
 
@@ -93,14 +84,10 @@ class NanoOCRVideo(
 
         self.model = AutoModelForImageTextToText.from_pretrained(
             nano_model_path,
-            # torch_dtype="auto",
             torch_dtype=torch.bfloat16,
-            device_map="cpu",
+            device_map="cuda",
             quantization_config=quant_config,
-            # attn_implementation="flash_attention_2",
         )
-
-        prepare_for_inference(self.model, backend="torchao_int4")
         self.model.eval()
 
         self.tokenizer = AutoTokenizer.from_pretrained(nano_model_path)
@@ -175,20 +162,13 @@ class NanoOCRVideo(
                     data_manager.create_data("StringsData") as strings_data,
                     data_manager.create_data("AnnotationData") as annotations_data,
                 ):
-                    if self.model is False:
-                        self.update_callbacks(callbacks, progress=1.0)
-                        return {
-                            "strings": strings_data,
-                            "annotations": annotations_data,
-                        }
-
                     for frame in video_decoder:
                         result = self.ocr_page_with_nanonets_s(
                             frame["frame"], max_new_tokens=500
                         )
-                        logging.warning(f"Raw: {result}")
+                        logging.debug("Raw Nano OCR result: %s", result)
                         result = self.postprocessing(result)
-                        logging.warning(f"Result: {result}")
+                        logging.debug("Processed Nano OCR result: %s", result)
 
                         text = StringData()
                         text.text = result
