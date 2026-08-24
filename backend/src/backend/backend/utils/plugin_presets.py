@@ -40,15 +40,19 @@ BATCH_PLUGIN_PRESETS = {
 
 
 def list_batch_presets():
-    return [
-        {
-            "id": preset_id,
-            "name": preset["name"],
-            "description": preset.get("description", ""),
-            "steps": preset["steps"],
-        }
-        for preset_id, preset in BATCH_PLUGIN_PRESETS.items()
-    ]
+    presets = []
+    for preset_id, preset in BATCH_PLUGIN_PRESETS.items():
+        if validate_batch_preset(preset_id)["status"] != "ok":
+            continue
+        presets.append(
+            {
+                "id": preset_id,
+                "name": preset["name"],
+                "description": preset.get("description", ""),
+                "steps": preset["steps"],
+            }
+        )
+    return presets
 
 
 def get_batch_preset(preset_id=None):
@@ -60,12 +64,36 @@ def validate_batch_preset(preset_id=None):
     preset = get_batch_preset(preset_id)
     if preset is None:
         return {"status": "error", "type": "not_exist"}
+    steps = preset.get("steps", [])
+    if not steps:
+        return {"status": "error", "type": "empty_preset"}
 
     plugin_manager = PluginManager()
-    for step in preset["steps"]:
+    previous_plugins = set()
+    current_plugins = {step.get("plugin") for step in steps}
+    for step in steps:
         plugin = step["plugin"]
         if plugin not in plugin_manager:
             return {"status": "error", "type": "plugin_not_exist", "plugin": plugin}
+
+        for parameter_name, expression in step.get("dependencies", {}).items():
+            dependency_plugin = expression.split(".", 1)[0]
+            if dependency_plugin not in current_plugins:
+                return {
+                    "status": "error",
+                    "type": "invalid_dependency",
+                    "plugin": plugin,
+                    "parameter": parameter_name,
+                    "dependency": expression,
+                }
+            if dependency_plugin not in previous_plugins:
+                return {
+                    "status": "error",
+                    "type": "dependency_cycle",
+                    "plugin": plugin,
+                    "parameter": parameter_name,
+                    "dependency": expression,
+                }
 
         parser = plugin_manager._parser.get(plugin)
         if parser is not None and parser()(copy.deepcopy(step.get("parameters", []))) is None:
@@ -74,6 +102,7 @@ def validate_batch_preset(preset_id=None):
                 "type": "invalid_plugin_parameters",
                 "plugin": plugin,
             }
+        previous_plugins.add(plugin)
 
     return {"status": "ok", "preset": preset}
 

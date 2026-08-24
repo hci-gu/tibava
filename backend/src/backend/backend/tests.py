@@ -32,6 +32,7 @@ from backend.utils.batch_upload import extract_zip_videos, normalize_zip_member_
 from backend.utils.upload import check_extension, download_file, get_file_extension
 from backend.utils.parser import Parser
 from backend.utils.plugin_presets import (
+    BATCH_PLUGIN_PRESETS,
     build_step_parameters,
     DEFAULT_BATCH_PRESET,
     list_batch_presets,
@@ -174,6 +175,82 @@ class BatchPresetTests(SimpleTestCase):
         self.assertTrue(presets)
         self.assertIn("description", presets[0])
         self.assertTrue(presets[0]["description"])
+
+    def test_validate_batch_preset_rejects_unknown_dependency(self):
+        with patch.dict(
+            BATCH_PLUGIN_PRESETS,
+            {
+                "bad_dependency": {
+                    "name": "Bad dependency",
+                    "steps": [
+                        {
+                            "plugin": "thumbnail",
+                            "parameters": [],
+                            "dependencies": {
+                                "shot_timeline_id": "missing.timelines.shots",
+                            },
+                        }
+                    ],
+                }
+            },
+        ):
+            result = validate_batch_preset("bad_dependency")
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["type"], "invalid_dependency")
+
+    def test_validate_batch_preset_rejects_forward_dependency_cycle(self):
+        with patch.dict(
+            BATCH_PLUGIN_PRESETS,
+            {
+                "cycle": {
+                    "name": "Cycle",
+                    "steps": [
+                        {
+                            "plugin": "thumbnail",
+                            "parameters": [],
+                            "dependencies": {
+                                "shot_timeline_id": "shotdetection.timelines.shots",
+                            },
+                        },
+                        {
+                            "plugin": "shotdetection",
+                            "parameters": [
+                                {"name": "timeline", "value": "Shots"},
+                                {"name": "fps", "value": 2.0},
+                            ],
+                        },
+                    ],
+                }
+            },
+        ):
+            result = validate_batch_preset("cycle")
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["type"], "dependency_cycle")
+
+    def test_list_batch_presets_excludes_invalid_presets(self):
+        with patch.dict(
+            BATCH_PLUGIN_PRESETS,
+            {
+                "bad_dependency": {
+                    "name": "Bad dependency",
+                    "steps": [
+                        {
+                            "plugin": "thumbnail",
+                            "parameters": [],
+                            "dependencies": {
+                                "shot_timeline_id": "missing.timelines.shots",
+                            },
+                        }
+                    ],
+                }
+            },
+        ):
+            preset_ids = [preset["id"] for preset in list_batch_presets()]
+
+        self.assertIn(DEFAULT_BATCH_PRESET, preset_ids)
+        self.assertNotIn("bad_dependency", preset_ids)
 
     def test_resolve_dependency_reads_nested_step_outputs(self):
         outputs = {"shotdetection": {"timelines": {"shots": "timeline-id"}}}

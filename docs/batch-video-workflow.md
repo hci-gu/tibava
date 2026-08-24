@@ -93,6 +93,10 @@ Preset validation runs before upload-triggered and manual execution. A preset st
 
 Plugins that require user-supplied files per run should not be added to a batch preset until they have a batch-safe parameter strategy.
 
+Presets are code-configured global definitions in `backend.utils.plugin_presets` for this rollout. To change production presets, update `BATCH_PLUGIN_PRESETS`, run `python3 backend/src/backend/manage.py test backend.tests`, and run `.\scripts\batch-api-smoke.ps1` against a Docker stack with the analyser online before deployment.
+
+Admin-managed or user-managed preset editing is intentionally out of scope until the batch preset shape stabilizes. If presets become editable later, dependency validation should remain mandatory before a preset can be saved or exposed.
+
 ## Operational Limits
 
 Relevant settings:

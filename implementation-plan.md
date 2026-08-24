@@ -55,11 +55,11 @@ Support batch uploads of hundreds of videos, preserve useful folder context afte
 
 ## 5. Preset Management
 
-- [ ] Decide whether production preset editing should be code-configured, admin-managed, or user-managed.
-- [ ] If admin-managed, add database models and admin/API endpoints for presets and preset steps.
-- [ ] If code-configured, add deployment documentation for changing preset definitions safely.
-- [ ] Validate preset dependencies before a preset can be saved or exposed.
-- [ ] Add tests for invalid preset definitions and dependency cycles.
+- [x] Decide whether production preset editing should be code-configured, admin-managed, or user-managed.
+- [x] Record admin-managed preset models and APIs as intentionally out of scope for this rollout.
+- [x] If code-configured, add deployment documentation for changing preset definitions safely.
+- [x] Validate preset dependencies before a preset can be saved or exposed.
+- [x] Add tests for invalid preset definitions and dependency cycles.
 
 ## 6. Docker Smoke Tests
 
