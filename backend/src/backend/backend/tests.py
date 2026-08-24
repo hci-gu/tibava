@@ -32,6 +32,7 @@ from backend.utils.upload import check_extension, download_file, get_file_extens
 from backend.utils.parser import Parser
 from backend.utils.plugin_presets import (
     build_step_parameters,
+    DEFAULT_BATCH_PRESET,
     list_batch_presets,
     resolve_dependency,
     validate_batch_preset,
@@ -545,6 +546,49 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertTrue(batch.source_path.endswith(".zip"))
         enqueue.assert_called_once_with(batch)
 
+    @override_settings(BATCH_UPLOAD_ROOT=tempfile.gettempdir())
+    def test_batch_upload_defaults_auto_run_to_default_preset(self):
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/upload",
+                {
+                    "name": "Auto preset",
+                    "auto_run_preset": "true",
+                    "files": [SimpleUploadedFile("a.mp4", b"a")],
+                },
+            )
+        )
+
+        with patch("backend.views.video_batch.enqueue_batch_ingest"):
+            response = VideoBatchUpload.as_view()(request)
+
+        data = json.loads(response.content)
+        batch = VideoBatch.objects.get(id=data["batch_id"])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(batch.preset, DEFAULT_BATCH_PRESET)
+        self.assertTrue(batch.auto_run_preset)
+
+    def test_batch_upload_rejects_unknown_preset(self):
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/upload",
+                {
+                    "name": "Bad preset",
+                    "preset": "missing_preset",
+                    "files": [SimpleUploadedFile("a.mp4", b"a")],
+                },
+            )
+        )
+
+        with patch("backend.views.video_batch.enqueue_batch_ingest") as enqueue:
+            response = VideoBatchUpload.as_view()(request)
+
+        data = json.loads(response.content)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(data["type"], "not_exist")
+        self.assertFalse(VideoBatch.objects.filter(name="Bad preset").exists())
+        enqueue.assert_not_called()
+
     def test_batch_list_and_detail_are_scoped_to_owner(self):
         own_batch = VideoBatch.objects.create(owner=self.user, name="Own")
         other_batch = VideoBatch.objects.create(owner=self.other_user, name="Other")
@@ -684,6 +728,41 @@ class VideoBatchTaskDatabaseTests(TestCase):
             self.assertEqual(item.ingest_status, VideoBatchItem.STATUS_READY)
             self.assertEqual(item.video, video)
             self.assertEqual(batch.status, VideoBatch.STATUS_READY)
+
+    def test_ingest_video_batch_auto_runs_preset_for_partial_success(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            source_path = Path(tmp_dir) / "video.mp4"
+            source_path.write_bytes(b"video")
+            batch = VideoBatch.objects.create(
+                owner=self.user,
+                name="Auto preset",
+                preset=DEFAULT_BATCH_PRESET,
+                auto_run_preset=True,
+            )
+            VideoBatchItem.objects.create(
+                batch=batch,
+                original_filename="video.mp4",
+                original_path="video.mp4",
+                source_path=str(source_path),
+            )
+            VideoBatchItem.objects.create(
+                batch=batch,
+                original_filename="bad.txt",
+                original_path="bad.txt",
+                ingest_status=VideoBatchItem.STATUS_ERROR,
+                ingest_error="wrong_file_extension",
+            )
+            video = self.make_video("Ingested")
+
+            with patch("backend.tasks.batch.ingest_video_file") as ingest:
+                with patch("backend.tasks.batch.run_video_batch_preset.apply_async") as run_preset:
+                    ingest.return_value = {"status": "ok", "video": video}
+                    ingest_video_batch(batch.id)
+
+            batch.refresh_from_db()
+            self.assertEqual(batch.status, VideoBatch.STATUS_PARTIAL_ERROR)
+            self.assertEqual(batch.ready_count, 1)
+            run_preset.assert_called_once_with((batch.id, DEFAULT_BATCH_PRESET))
 
     def test_run_video_batch_preset_creates_done_step_rows(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Preset")

@@ -4,7 +4,11 @@
       <v-row align="center" class="mb-4">
         <v-col>
           <h1 class="text-h5 mb-1">{{ batch.name }}</h1>
-          <div class="text-caption">{{ batch.status }} - {{ batch.total_count }} videos</div>
+          <div class="text-caption">
+            {{ batch.status }} - {{ batch.total_count }} videos
+            <span v-if="batch.preset"> - {{ presetLabel }}</span>
+            <span v-if="batch.auto_run_preset"> - auto-run</span>
+          </div>
         </v-col>
         <v-col cols="auto">
           <v-btn outlined class="mr-2" @click="confirmRunPreset = true">
@@ -220,6 +224,7 @@ export default {
     };
   },
   mounted() {
+    this.videoBatchStore.fetchPresets();
     this.fetchBatch();
     this.timer = setInterval(this.fetchBatch, 3000);
   },
@@ -232,6 +237,13 @@ export default {
     },
     batch() {
       return this.videoBatchStore.get(this.batchId);
+    },
+    presetLabel() {
+      if (!this.batch || !this.batch.preset) return "";
+      const preset = this.videoBatchStore.presets.find(
+        (entry) => entry.id === this.batch.preset
+      );
+      return preset ? preset.name : this.batch.preset;
     },
     filteredItems() {
       if (!this.batch || !this.batch.items) return [];

@@ -72,6 +72,17 @@ class VideoBatchUpload(View):
                     {"status": "error", "type": "wrong_request_body"}, status=500
                 )
 
+            preset = request.POST.get("preset") or None
+            auto_run_preset = (
+                request.POST.get("auto_run_preset", "false").lower() == "true"
+            )
+            if auto_run_preset and not preset:
+                preset = DEFAULT_BATCH_PRESET
+            if preset:
+                validation = validate_batch_preset(preset)
+                if validation["status"] != "ok":
+                    return JsonResponse(validation, status=500)
+
             active_count = VideoBatch.objects.filter(
                 owner=request.user,
                 status__in=[
@@ -93,9 +104,8 @@ class VideoBatchUpload(View):
             batch = VideoBatch.objects.create(
                 owner=request.user,
                 name=name,
-                preset=request.POST.get("preset") or None,
-                auto_run_preset=request.POST.get("auto_run_preset", "false").lower()
-                == "true",
+                preset=preset,
+                auto_run_preset=auto_run_preset and preset is not None,
                 source_type=(
                     VideoBatch.SOURCE_ZIP if zip_file is not None else VideoBatch.SOURCE_FILES
                 ),

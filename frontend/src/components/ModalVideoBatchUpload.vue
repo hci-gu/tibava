@@ -92,8 +92,11 @@ export default {
       autoRunPreset: true,
     };
   },
-  mounted() {
-    this.videoBatchStore.fetchPresets();
+  async mounted() {
+    await this.videoBatchStore.fetchPresets();
+    if (!this.preset && this.presetItems.length) {
+      this.preset = this.presetItems[0].id;
+    }
   },
   computed: {
     disabled() {

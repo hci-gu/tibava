@@ -28,12 +28,12 @@ Support batch uploads of hundreds of videos, preserve useful folder context afte
 
 ## 2. Automatic Preset Execution
 
-- [ ] Add an option to run a selected preset automatically after batch ingest completes.
-- [ ] Persist the selected preset on the batch at upload time.
-- [ ] Start preset execution only after all ingestable files have reached a terminal ingest state.
-- [ ] Make partially failed ingest batches eligible to run presets for successfully ingested videos.
-- [ ] Show the selected preset and auto-run state in the batch detail header.
-- [ ] Add tests for upload-with-preset and auto-run-after-ingest behavior.
+- [x] Add an option to run a selected preset automatically after batch ingest completes.
+- [x] Persist the selected preset on the batch at upload time.
+- [x] Start preset execution only after all ingestable files have reached a terminal ingest state.
+- [x] Make partially failed ingest batches eligible to run presets for successfully ingested videos.
+- [x] Show the selected preset and auto-run state in the batch detail header.
+- [x] Add tests for upload-with-preset and auto-run-after-ingest behavior.
 
 ## 3. Explicit Batch Scheduler
 
