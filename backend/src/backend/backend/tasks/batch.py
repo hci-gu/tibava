@@ -4,7 +4,13 @@ import zipfile
 
 from celery import shared_task
 
-from backend.models import PluginRun, VideoBatch, VideoBatchItem, VideoBatchPluginRun
+from backend.models import (
+    PluginRun,
+    Timeline,
+    VideoBatch,
+    VideoBatchItem,
+    VideoBatchPluginRun,
+)
 from backend.plugin_manager import PluginManager
 from backend.utils.batch_upload import (
     extract_zip_videos,
@@ -134,6 +140,48 @@ def create_zip_batch_items(batch):
         )
 
 
+def get_completed_step_outputs(tracker):
+    if tracker.plugin == "shotdetection" and tracker.plugin_run_id:
+        timeline = (
+            Timeline.objects.filter(
+                video=tracker.item.video,
+                plugin_run_result__plugin_run=tracker.plugin_run,
+            )
+            .order_by("order", "id")
+            .first()
+        )
+        if timeline:
+            return {"timelines": {"shots": timeline.id.hex}}
+    return {}
+
+
+def is_batch_cancelled(batch):
+    batch.refresh_from_db(fields=["status"])
+    return batch.status == VideoBatch.STATUS_CANCELLED
+
+
+def cancel_batch_work(batch):
+    VideoBatchItem.objects.filter(
+        batch=batch,
+        ingest_status__in=[
+            VideoBatchItem.STATUS_PENDING,
+            VideoBatchItem.STATUS_INGESTING,
+        ],
+    ).update(
+        ingest_status=VideoBatchItem.STATUS_ERROR,
+        ingest_error="cancelled",
+    )
+    VideoBatchPluginRun.objects.filter(
+        batch=batch,
+        status__in=[
+            VideoBatchPluginRun.STATUS_PENDING,
+            VideoBatchPluginRun.STATUS_RUNNING,
+        ],
+    ).update(status=VideoBatchPluginRun.STATUS_SKIPPED, error="cancelled")
+    batch.status = VideoBatch.STATUS_CANCELLED
+    batch.refresh_counters()
+
+
 @shared_task(bind=True)
 def ingest_video_batch(self, batch_id):
     try:
@@ -142,11 +190,23 @@ def ingest_video_batch(self, batch_id):
         logger.error("Video batch %s does not exist", batch_id)
         return
 
+    if batch.status == VideoBatch.STATUS_CANCELLED:
+        cancel_batch_work(batch)
+        return
+
     batch.status = VideoBatch.STATUS_INGESTING
     batch.save(update_fields=["status", "update_date"])
 
+    if is_batch_cancelled(batch):
+        cancel_batch_work(batch)
+        return
+
     if batch.source_type == VideoBatch.SOURCE_ZIP and batch.items.count() == 0:
         create_zip_batch_items(batch)
+
+    if is_batch_cancelled(batch):
+        cancel_batch_work(batch)
+        return
 
     for item in batch.items.filter(
         ingest_status__in=[
@@ -154,6 +214,10 @@ def ingest_video_batch(self, batch_id):
             VideoBatchItem.STATUS_ERROR,
         ]
     ).order_by("date"):
+        if is_batch_cancelled(batch):
+            cancel_batch_work(batch)
+            return
+
         if item.ingest_status == VideoBatchItem.STATUS_ERROR and not item.source_path:
             continue
         try:
@@ -164,7 +228,14 @@ def ingest_video_batch(self, batch_id):
             item.ingest_error = "ingest_error"
             item.save(update_fields=["ingest_status", "ingest_error", "update_date"])
         finally:
+            if is_batch_cancelled(batch):
+                cancel_batch_work(batch)
+                return
             batch.refresh_counters()
+
+    if is_batch_cancelled(batch):
+        cancel_batch_work(batch)
+        return
 
     batch.refresh_counters()
     if batch.status == VideoBatch.STATUS_READY and batch.source_path:
@@ -202,6 +273,10 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
         return
 
     plugin_manager = PluginManager()
+    if batch.status == VideoBatch.STATUS_CANCELLED:
+        cancel_batch_work(batch)
+        return
+
     batch.status = VideoBatch.STATUS_RUNNING
     batch.preset = preset_id
     batch.save(update_fields=["status", "preset", "update_date"])
@@ -210,8 +285,16 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
         ingest_status=VideoBatchItem.STATUS_READY,
         video__isnull=False,
     ).order_by("original_path", "original_filename"):
+        if is_batch_cancelled(batch):
+            cancel_batch_work(batch)
+            return
+
         outputs = {}
         for step_index, step in enumerate(preset["steps"]):
+            if is_batch_cancelled(batch):
+                cancel_batch_work(batch)
+                return
+
             tracker, _ = VideoBatchPluginRun.objects.get_or_create(
                 batch=batch,
                 item=item,
@@ -221,6 +304,7 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
                 defaults={"status": VideoBatchPluginRun.STATUS_PENDING},
             )
             if tracker.status == VideoBatchPluginRun.STATUS_DONE:
+                outputs[step["plugin"]] = get_completed_step_outputs(tracker)
                 continue
 
             parameters = build_step_parameters(step, outputs)
@@ -248,6 +332,15 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
                 except PluginRun.DoesNotExist:
                     tracker.plugin_run = None
 
+            if is_batch_cancelled(batch):
+                tracker.status = VideoBatchPluginRun.STATUS_SKIPPED
+                tracker.error = "cancelled"
+                tracker.save(
+                    update_fields=["plugin_run", "status", "error", "update_date"]
+                )
+                cancel_batch_work(batch)
+                return
+
             if not result.get("status"):
                 tracker.status = VideoBatchPluginRun.STATUS_ERROR
                 tracker.error = "plugin_run_failed"
@@ -262,6 +355,10 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
                 update_fields=["plugin_run", "status", "error", "update_date"]
             )
             outputs[step["plugin"]] = result.get("result", {})
+
+    if is_batch_cancelled(batch):
+        cancel_batch_work(batch)
+        return
 
     if batch.plugin_runs.filter(status=VideoBatchPluginRun.STATUS_ERROR).exists():
         batch.status = VideoBatch.STATUS_PARTIAL_ERROR

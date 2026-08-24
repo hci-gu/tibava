@@ -7,7 +7,7 @@ from django.http import JsonResponse
 from django.views import View
 
 from backend.models import VideoBatch, VideoBatchItem, VideoBatchPluginRun
-from backend.tasks.batch import ingest_video_batch, run_video_batch_preset
+from backend.tasks.batch import cancel_batch_work, ingest_video_batch, run_video_batch_preset
 from backend.utils.batch_upload import (
     get_batch_dir,
     get_max_active_batch_ingests_per_user,
@@ -289,25 +289,7 @@ class VideoBatchCancel(View):
             except VideoBatch.DoesNotExist:
                 return JsonResponse({"status": "error", "type": "not_exist"}, status=500)
 
-            VideoBatchItem.objects.filter(
-                batch=batch,
-                ingest_status__in=[
-                    VideoBatchItem.STATUS_PENDING,
-                    VideoBatchItem.STATUS_INGESTING,
-                ],
-            ).update(
-                ingest_status=VideoBatchItem.STATUS_ERROR,
-                ingest_error="cancelled",
-            )
-            VideoBatchPluginRun.objects.filter(
-                batch=batch,
-                status__in=[
-                    VideoBatchPluginRun.STATUS_PENDING,
-                    VideoBatchPluginRun.STATUS_RUNNING,
-                ],
-            ).update(status=VideoBatchPluginRun.STATUS_SKIPPED, error="cancelled")
-            batch.status = VideoBatch.STATUS_ERROR
-            batch.save(update_fields=["status", "update_date"])
+            cancel_batch_work(batch)
             return JsonResponse({"status": "ok", "batch_id": batch.id.hex})
         except Exception:
             logger.exception("Failed to cancel video batch")

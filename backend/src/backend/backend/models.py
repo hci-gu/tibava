@@ -107,6 +107,7 @@ class VideoBatch(models.Model):
     STATUS_PARTIAL_ERROR = "P"
     STATUS_ERROR = "E"
     STATUS_RUNNING = "N"
+    STATUS_CANCELLED = "C"
     STATUS = {
         STATUS_UPLOADING: "UPLOADING",
         STATUS_INGESTING: "INGESTING",
@@ -114,6 +115,7 @@ class VideoBatch(models.Model):
         STATUS_PARTIAL_ERROR: "PARTIAL_ERROR",
         STATUS_ERROR: "ERROR",
         STATUS_RUNNING: "RUNNING",
+        STATUS_CANCELLED: "CANCELLED",
     }
     status = models.CharField(
         max_length=2,
@@ -148,7 +150,9 @@ class VideoBatch(models.Model):
         self.failed_count = items.filter(ingest_status=VideoBatchItem.STATUS_ERROR).count()
         self.completed_count = self.ready_count
 
-        if self.total_count == 0 and self.status != self.STATUS_INGESTING:
+        if self.status == self.STATUS_CANCELLED:
+            pass
+        elif self.total_count == 0 and self.status != self.STATUS_INGESTING:
             self.status = self.STATUS_ERROR
         elif self.failed_count == self.total_count:
             self.status = self.STATUS_ERROR

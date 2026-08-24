@@ -1,4 +1,5 @@
 import logging
+import sys
 
 from django.apps import AppConfig
 from django.db.models import Q
@@ -12,6 +13,10 @@ class BackendConfig(AppConfig):
     name = "backend"
 
     def ready(self):
+        command = sys.argv[1] if len(sys.argv) > 1 else ""
+        if sys.argv[0].endswith("manage.py") and command not in {"runserver"}:
+            return
+
         table_names = connection.introspection.table_names()
         if 'backend_pluginrun' not in table_names:
             return
@@ -30,13 +35,28 @@ class BackendConfig(AppConfig):
         if scheduled is None or active is None or reserved is None:
             return
 
-        celery_runs = [
-            run['args'][0]['plugin_run']
-            for category in (list(scheduled.values()) +
-                             list(active.values()) +
-                             list(reserved.values()))
-            for run in category
-        ]
+        celery_runs = []
+        celery_batch_runs = []
+        celery_categories = (
+            list(scheduled.values()) + list(active.values()) + list(reserved.values())
+        )
+        for category in celery_categories:
+            for run in category:
+                args = run.get("args") or []
+                if not args:
+                    continue
+
+                if run.get("name") == "backend.plugin_manager.run_plugin":
+                    first_arg = args[0]
+                    if isinstance(first_arg, dict) and first_arg.get("plugin_run"):
+                        celery_runs.append(first_arg["plugin_run"])
+                    continue
+
+                if run.get("name") in {
+                    "backend.tasks.batch.ingest_video_batch",
+                    "backend.tasks.batch.run_video_batch_preset",
+                }:
+                    celery_batch_runs.append(args[0])
 
         open_runs = PluginRun.objects.exclude(Q(status=PluginRun.STATUS_DONE)|
                                               Q(status=PluginRun.STATUS_ERROR)|
@@ -54,7 +74,7 @@ class BackendConfig(AppConfig):
 
         interrupted_items = VideoBatchItem.objects.filter(
             ingest_status=VideoBatchItem.STATUS_INGESTING
-        )
+        ).exclude(batch_id__in=celery_batch_runs)
         if interrupted_items.exists():
             logger.warning(
                 f'Setting {interrupted_items.count()} interrupted batch items to ERROR'
@@ -66,7 +86,7 @@ class BackendConfig(AppConfig):
 
         interrupted_plugin_steps = VideoBatchPluginRun.objects.filter(
             status=VideoBatchPluginRun.STATUS_RUNNING
-        )
+        ).exclude(batch_id__in=celery_batch_runs)
         if interrupted_plugin_steps.exists():
             logger.warning(
                 f'Setting {interrupted_plugin_steps.count()} interrupted batch plugin steps to ERROR'
@@ -82,7 +102,7 @@ class BackendConfig(AppConfig):
                 VideoBatch.STATUS_INGESTING,
                 VideoBatch.STATUS_RUNNING,
             ]
-        )
+        ).exclude(id__in=celery_batch_runs)
         if interrupted_batches.exists():
             logger.warning(
                 f'Setting {interrupted_batches.count()} interrupted batches to PARTIAL_ERROR'

@@ -21,6 +21,7 @@ from backend.utils.plugin_presets import (
 from backend.utils.video_ingest import ingest_video_file
 from backend.views.video import VideoUpload
 from backend.views.video_batch import (
+    VideoBatchCancel,
     VideoBatchGet,
     VideoBatchRetryFailed,
     VideoBatchRetryFailedPluginSteps,
@@ -389,3 +390,22 @@ class VideoBatchViewTests(SimpleTestCase):
         run_preset.apply_async.assert_called_once_with(
             (batch_id, "default_batch_analysis")
         )
+
+    def test_cancel_batch_marks_batch_cancelled(self):
+        batch_id = uuid.uuid4()
+        fake_batch = SimpleNamespace(id=batch_id)
+        request = RequestFactory().post(
+            "/video/batch/cancel",
+            data=f'{{"id":"{batch_id.hex}"}}',
+            content_type="application/json",
+        )
+        request.user = SimpleNamespace(is_authenticated=True)
+
+        with patch("backend.views.video_batch.VideoBatch.objects.get") as get_batch:
+            with patch("backend.views.video_batch.cancel_batch_work") as cancel_work:
+                get_batch.return_value = fake_batch
+
+                response = VideoBatchCancel.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        cancel_work.assert_called_once_with(fake_batch)

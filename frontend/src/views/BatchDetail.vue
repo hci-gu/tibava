@@ -159,6 +159,7 @@ export default {
     },
     statusColor(status) {
       if (status === "ERROR" || status === "PARTIAL_ERROR") return "red";
+      if (status === "CANCELLED") return "grey";
       if (status === "READY" || status === "DONE") return "green";
       if (status === "RUNNING" || status === "INGESTING") return "blue";
       return "orange";
