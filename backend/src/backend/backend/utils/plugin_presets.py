@@ -8,6 +8,10 @@ DEFAULT_BATCH_PRESET = "default_batch_analysis"
 BATCH_PLUGIN_PRESETS = {
     DEFAULT_BATCH_PRESET: {
         "name": "Default batch analysis",
+        "description": (
+            "Generate thumbnails, detect shots, and classify camera setting "
+            "for each ready video."
+        ),
         "steps": [
             {
                 "plugin": "thumbnail",
@@ -37,7 +41,12 @@ BATCH_PLUGIN_PRESETS = {
 
 def list_batch_presets():
     return [
-        {"id": preset_id, "name": preset["name"], "steps": preset["steps"]}
+        {
+            "id": preset_id,
+            "name": preset["name"],
+            "description": preset.get("description", ""),
+            "steps": preset["steps"],
+        }
         for preset_id, preset in BATCH_PLUGIN_PRESETS.items()
     ]
 

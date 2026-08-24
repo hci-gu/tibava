@@ -15,6 +15,7 @@ from backend.utils.upload import check_extension, download_file, get_file_extens
 from backend.utils.parser import Parser
 from backend.utils.plugin_presets import (
     build_step_parameters,
+    list_batch_presets,
     resolve_dependency,
     validate_batch_preset,
 )
@@ -143,6 +144,13 @@ class BatchZipTests(SimpleTestCase):
 class BatchPresetTests(SimpleTestCase):
     def test_default_batch_preset_validates(self):
         self.assertEqual(validate_batch_preset()["status"], "ok")
+
+    def test_list_batch_presets_includes_description(self):
+        presets = list_batch_presets()
+
+        self.assertTrue(presets)
+        self.assertIn("description", presets[0])
+        self.assertTrue(presets[0]["description"])
 
     def test_resolve_dependency_reads_nested_step_outputs(self):
         outputs = {"shotdetection": {"timelines": {"shots": "timeline-id"}}}

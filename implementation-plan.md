@@ -83,14 +83,20 @@ Upload test notes:
 
 ## Phase 5: Make Presets Product-Ready
 
-- [ ] Decide the production default plugin subset.
-- [ ] Decide whether presets are global config, admin-managed database rows, or user-defined.
-- [ ] Add a preset list API that includes user-facing names and descriptions.
-- [ ] Add preset validation at upload time and run time.
-- [ ] Add support for preset steps with optional parameters.
-- [ ] Exclude plugins that require per-run uploaded files unless a batch-safe parameter strategy exists.
+- [x] Decide the production default plugin subset.
+- [x] Decide whether presets are global config, admin-managed database rows, or user-defined.
+- [x] Add a preset list API that includes user-facing names and descriptions.
+- [x] Add preset validation at upload time and run time.
+- [x] Add support for preset steps with fixed optional parameters.
+- [x] Exclude plugins that require per-run uploaded files unless a batch-safe parameter strategy exists.
 - [ ] Add an admin or config workflow for editing presets.
-- [ ] Add documentation for preset dependency expressions.
+- [x] Add documentation for preset dependency expressions.
+
+Preset decision notes:
+
+- Presets remain code-defined global config for now, via `backend.utils.plugin_presets`.
+- The production default subset is `thumbnail`, `shotdetection`, and `shot_type_classification`.
+- User-editable or admin-editable presets remain a later product decision.
 
 ## Phase 6: Add Integration Tests
 
@@ -130,13 +136,13 @@ Upload test notes:
 
 ## Phase 9: Documentation And Rollout
 
-- [ ] Document the batch upload API contract.
-- [ ] Document zip upload constraints and path-preservation behavior.
-- [ ] Document batch status and item status meanings.
-- [ ] Document preset behavior and dependency rules.
-- [ ] Document operational limits and relevant settings.
-- [ ] Document the seeded test account and seeded batch fixture.
-- [ ] Add manual QA steps for release testing.
+- [x] Document the batch upload API contract.
+- [x] Document zip upload constraints and path-preservation behavior.
+- [x] Document batch status and item status meanings.
+- [x] Document preset behavior and dependency rules.
+- [x] Document operational limits and relevant settings.
+- [x] Document the seeded test account and seeded batch fixture.
+- [x] Add manual QA steps for release testing.
 - [ ] Decide whether to keep or remove the seeded test account before production deployment.
 
 ## Verification Log
