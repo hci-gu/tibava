@@ -127,6 +127,9 @@ export default {
       router.push({ path: `/videoanalysis/${video_id}` });
     },
     async fetchData(fetchTimelines = false) {
+      if (!this.userStore.loggedIn) {
+        return;
+      }
       await this.videoStore.fetchAll();
       await this.pluginRunStore.fetchAll({ addResults: false, });
       if (fetchTimelines) {

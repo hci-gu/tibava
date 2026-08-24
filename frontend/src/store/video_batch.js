@@ -1,6 +1,7 @@
 import axios from "../plugins/axios";
 import config from "../../app.config";
 import { defineStore } from "pinia";
+import Vue from "vue";
 
 export const useVideoBatchStore = defineStore("videoBatch", {
   state: () => {
@@ -39,7 +40,7 @@ export const useVideoBatchStore = defineStore("videoBatch", {
             this.batches = {};
             this.batchList = [];
             res.data.entries.forEach((batch) => {
-              this.batches[batch.id] = batch;
+              Vue.set(this.batches, batch.id, batch);
               this.batchList.push(batch.id);
             });
           }
@@ -55,7 +56,7 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         .get(`${config.API_LOCATION}/video/batch/get`, { params: { id: batchId } })
         .then((res) => {
           if (res.data.status === "ok") {
-            this.batches[res.data.entry.id] = res.data.entry;
+            Vue.set(this.batches, res.data.entry.id, res.data.entry);
             if (!this.batchList.includes(res.data.entry.id)) {
               this.batchList.push(res.data.entry.id);
             }
@@ -124,7 +125,7 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         .then((res) => {
           if (res.data.status === "ok") {
             this.batchList = this.batchList.filter((id) => id !== batchId);
-            delete this.batches[batchId];
+            Vue.delete(this.batches, batchId);
           }
         });
     },

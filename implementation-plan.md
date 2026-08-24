@@ -16,15 +16,15 @@ Support batch uploads of hundreds of videos, preserve useful folder context afte
 
 ## 1. Browser-Verified Batch Upload UX
 
-- [ ] Run a browser smoke test for the batch list and batch detail pages.
-- [ ] Confirm the seeded batch `3088719230d94c0fa6bc8623ca353a98` renders with 7 ready videos.
-- [ ] Confirm folder/path values render correctly in the batch detail table.
-- [ ] Confirm each copied video opens from the batch detail table into the existing video analysis view.
-- [ ] Upload multiple loose video files through the batch upload modal.
-- [ ] Confirm loose-file batch uploads preserve the frontend-provided display paths where available.
-- [ ] Upload a nested zip through the batch upload modal.
-- [ ] Confirm zip folder grouping works in the UI for nested paths.
-- [ ] Fix any browser-only layout, routing, or API shape issues found during the smoke test.
+- [x] Run a browser smoke test for the batch list and batch detail pages.
+- [x] Confirm the seeded batch `3088719230d94c0fa6bc8623ca353a98` renders with 7 ready videos.
+- [x] Confirm folder/path values render correctly in the batch detail table.
+- [x] Confirm each copied video opens from the batch detail table into the existing video analysis view.
+- [x] Upload multiple loose video files through the batch upload modal.
+- [x] Confirm loose-file batch uploads preserve the frontend-provided display paths where available.
+- [x] Upload a nested zip through the batch upload modal.
+- [x] Confirm zip folder grouping works in the UI for nested paths.
+- [x] Fix any browser-only layout, routing, or API shape issues found during the smoke test.
 
 ## 2. Automatic Preset Execution
 
