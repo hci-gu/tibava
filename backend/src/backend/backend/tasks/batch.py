@@ -1,9 +1,11 @@
 import logging
 from pathlib import Path
+import time
 import zipfile
 
 from celery import shared_task
 from django.conf import settings
+from django.utils import timezone
 
 from backend.models import (
     PluginRun,
@@ -353,6 +355,7 @@ def finalize_batch_plugin_schedule(batch):
 
 @shared_task(bind=True)
 def ingest_video_batch(self, batch_id):
+    start_time = time.monotonic()
     try:
         batch = VideoBatch.objects.get(id=batch_id)
     except VideoBatch.DoesNotExist:
@@ -407,6 +410,15 @@ def ingest_video_batch(self, batch_id):
         return
 
     batch.refresh_counters()
+    logger.info(
+        "batch_ingest_complete batch_id=%s status=%s total=%s ready=%s failed=%s duration_seconds=%.3f",
+        batch.id,
+        batch.STATUS[batch.status],
+        batch.total_count,
+        batch.ready_count,
+        batch.failed_count,
+        time.monotonic() - start_time,
+    )
     if batch.status == VideoBatch.STATUS_READY and batch.source_path:
         try:
             Path(batch.source_path).unlink()
@@ -420,6 +432,7 @@ def ingest_video_batch(self, batch_id):
 
 @shared_task(bind=True)
 def run_video_batch_preset(self, batch_id, preset_id=None):
+    scheduler_start_time = time.monotonic()
     try:
         batch = VideoBatch.objects.get(id=batch_id)
     except VideoBatch.DoesNotExist:
@@ -451,6 +464,7 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
     batch.save(update_fields=["status", "preset", "update_date"])
     ensure_batch_plugin_run_rows(batch, preset_id, preset)
 
+    dispatched_count = 0
     while True:
         if is_batch_cancelled(batch):
             cancel_batch_work(batch)
@@ -476,6 +490,7 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
 
             dispatched = dispatch_batch_plugin_step(tracker, batch, preset_id)
             if dispatched:
+                dispatched_count += 1
                 capacity -= 1
             if capacity <= 0:
                 break
@@ -488,10 +503,18 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
         return
 
     finalize_batch_plugin_schedule(batch)
+    logger.info(
+        "batch_scheduler_tick batch_id=%s preset=%s dispatched=%s duration_seconds=%.3f",
+        batch.id,
+        preset_id,
+        dispatched_count,
+        time.monotonic() - scheduler_start_time,
+    )
 
 
 @shared_task(bind=True)
 def run_video_batch_plugin_step(self, tracker_id, batch_id, preset_id):
+    step_start_time = time.monotonic()
     try:
         tracker = VideoBatchPluginRun.objects.select_related(
             "batch",
@@ -526,6 +549,7 @@ def run_video_batch_plugin_step(self, tracker_id, batch_id, preset_id):
 
     preset = validation["preset"]
     step = preset["steps"][tracker.step_index]
+    queue_wait_seconds = (timezone.now() - tracker.date).total_seconds()
     outputs = get_step_outputs_for_item(
         batch,
         tracker.item,
@@ -570,4 +594,14 @@ def run_video_batch_plugin_step(self, tracker_id, batch_id, preset_id):
         tracker.status = VideoBatchPluginRun.STATUS_DONE
         tracker.error = ""
     tracker.save(update_fields=["plugin_run", "status", "error", "update_date"])
+    logger.info(
+        "batch_plugin_step_complete batch_id=%s item_id=%s tracker_id=%s plugin=%s status=%s queue_wait_seconds=%.3f duration_seconds=%.3f",
+        batch.id,
+        tracker.item.id,
+        tracker.id,
+        tracker.plugin,
+        tracker.STATUS[tracker.status],
+        queue_wait_seconds,
+        time.monotonic() - step_start_time,
+    )
     run_video_batch_preset.apply_async((batch.id, preset_id))

@@ -49,7 +49,7 @@ Support batch uploads of hundreds of videos, preserve useful folder context afte
 
 - [x] Add cancellation behavior for already-started analyser plugin runs if the analyser exposes a supported cancel operation.
 - [x] Add clear handling for videos deleted while a batch is queued or running.
-- [ ] Decide whether the known `thumbnail_generator` decode failure for `user-3/Tagesschau-oil.mp4` should be fixed, skipped, or documented as an analyser limitation.
+- [x] Decide whether the known `thumbnail_generator` decode failure for `user-3/Tagesschau-oil.mp4` should be fixed, skipped, or documented as an analyser limitation.
 - [x] Add user-facing error messages for skipped/deleted/cancelled plugin work.
 - [x] Add regression tests for deleted-video and mid-plugin-cancel behavior.
 
@@ -73,14 +73,14 @@ Support batch uploads of hundreds of videos, preserve useful folder context afte
 
 - [ ] Measure baseline preset runtime for the seeded batch before relying on analyser upload caching.
 - [ ] Measure preset runtime after analyser upload caching.
-- [ ] Add structured logs or metrics for batch ingest duration, queue wait time, plugin runtime, retry count, and cache hit/miss counts.
-- [ ] Add a compact operational dashboard or admin view for stuck/running batches if needed.
-- [ ] Define alert thresholds for batches stuck in ingesting/running states.
+- [x] Add structured logs or metrics for batch ingest duration, queue wait time, plugin runtime, retry count, and cache hit/miss counts.
+- [x] Add a compact operational dashboard or admin view for stuck/running batches if needed.
+- [x] Define alert thresholds for batches stuck in ingesting/running states.
 
 ## 8. Rollout Readiness
 
-- [ ] Decide whether to keep or remove the seeded test account before production deployment.
-- [ ] Add release QA instructions that cover browser UI, API, worker restart recovery, and analyser availability.
-- [ ] Document recommended limits for maximum files per batch, maximum zip size, and concurrent active batches.
-- [ ] Add migration/rollback notes for the analyser cache fields and any scheduler fields.
+- [x] Decide whether to keep or remove the seeded test account before production deployment.
+- [x] Add release QA instructions that cover browser UI, API, worker restart recovery, and analyser availability.
+- [x] Document recommended limits for maximum files per batch, maximum zip size, and concurrent active batches.
+- [x] Add migration/rollback notes for the analyser cache fields and any scheduler fields.
 - [ ] Run the full backend test suite, frontend build, Docker smoke scripts, and browser smoke test before release.

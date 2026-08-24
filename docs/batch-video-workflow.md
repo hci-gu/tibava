@@ -81,6 +81,10 @@ Batch plugin step statuses:
 - `ERROR`: plugin step failed; inspect `error`.
 - `SKIPPED`: step was cancelled before completion.
 
+## Known Analyser Limitation
+
+The seeded video `user-3/Tagesschau-oil.mp4` currently fails in `thumbnail_generator` because the analyser-side PyAV decoder raises `InvalidDataError` while reading one packet. Batch execution treats this as a plugin failure, keeps the affected row visible with `plugin_run_failed`, and continues other videos. This is documented as an analyser limitation for the batch rollout rather than a batch scheduler failure.
+
 ## Presets
 
 The current production candidate preset is `default_batch_analysis`:
@@ -112,6 +116,25 @@ Relevant settings:
 
 Preset execution uses a scheduler task plus one Celery task per batch plugin step. The scheduler dispatches only dependency-ready steps and applies the per-batch, per-user, and global plugin-run limits before starting more analyser work.
 
+Recommended production starting limits:
+
+- `MAX_BATCH_FILES=500`
+- `MAX_BATCH_TOTAL_SIZE=268435456000`
+- `MAX_ACTIVE_BATCH_INGESTS_PER_USER=1`
+- `MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH=1`
+- `MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER=2`
+- `MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL=4`
+
+Suggested alert thresholds:
+
+- Batch `UPLOADING` for more than 10 minutes.
+- Batch `INGESTING` for more than 60 minutes.
+- Batch `RUNNING` for more than 6 hours.
+- Any batch plugin step `RUNNING` for more than 2 hours without `PluginRun.progress` movement.
+- Repeated analyser upload cache misses for the same unchanged `Video`.
+
+The existing batch list/detail views are the compact operational view for this rollout. A separate admin dashboard is not needed until operators need cross-user filtering, stuck-task bulk actions, or historical runtime charts.
+
 Run `python3 backend/src/backend/manage.py video_batch_cleanup` to remove abandoned temporary batch directories that no longer have matching database rows.
 
 ## Docker Smoke Test
@@ -142,7 +165,7 @@ Local QA account:
 - Password: `password123`
 - Seeded batch: `3088719230d94c0fa6bc8623ca353a98`
 
-Remove or rotate this account before production deployment.
+Keep this account only in local/dev seed data. Remove or rotate it before production deployment.
 
 ## Manual QA Checklist
 
@@ -157,3 +180,22 @@ Remove or rotate this account before production deployment.
 9. Retry a failed ingest item that still has a source file.
 10. Cancel a queued/running batch and confirm `CANCELLED`.
 11. Delete a disposable batch and confirm it disappears from the list.
+
+## Release QA And Rollback Notes
+
+Before release:
+
+1. Run `python -m compileall backend/src/backend/backend`.
+2. Run `python3 backend/src/backend/manage.py test backend.tests`.
+3. Run `NODE_OPTIONS=--openssl-legacy-provider npm run build` from `frontend/`.
+4. Run `.\scripts\batch-api-smoke.ps1` against Docker with analyser and inference services online.
+5. Run browser QA for `/batches`, the seeded batch detail page, loose-file modal upload, nested-zip modal upload, and linked video analysis navigation.
+6. Restart backend and Celery while a disposable batch has queued/running work, then confirm running rows either continue if the task is still active or become retryable errors.
+
+Migration notes:
+
+- `0023_videobatch_videobatchitem.py` adds batch, item, and plugin-step tracking tables.
+- `0024_videobatch_cancelled_status.py` adds the cancelled batch state.
+- `0025_video_analyser_data_cache.py` adds analyser cache fields to `Video`.
+- Rollback of `0025` removes only analyser cache metadata; videos and plugin results remain intact, but repeated preset steps will upload videos to the analyser again.
+- Rollback of `0023` or `0024` removes batch workflow state and should only happen before production batches exist or after exporting/deleting batch rows.
