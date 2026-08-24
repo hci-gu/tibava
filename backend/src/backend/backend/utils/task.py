@@ -19,9 +19,29 @@ class Task:
         pass
 
     def upload_video(self, client: TaskAnalyserClient, video: Video) -> str:
+        if (
+            video.analyser_data_id
+            and video.analyser_data_file == video.file
+            and video.analyser_data_ext == video.ext
+        ):
+            logger.info("Analyser video cache hit for video %s", video.id)
+            return video.analyser_data_id
+
+        logger.info("Analyser video cache miss for video %s", video.id)
         video_file = media_path_to_video(video.file.hex, video.ext)
 
         data_id = client.upload_file(video_file)
+        if data_id:
+            video.analyser_data_id = data_id
+            video.analyser_data_file = video.file
+            video.analyser_data_ext = video.ext
+            video.save(
+                update_fields=[
+                    "analyser_data_id",
+                    "analyser_data_file",
+                    "analyser_data_ext",
+                ]
+            )
         return data_id
 
     def run_analyser(

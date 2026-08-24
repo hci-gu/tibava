@@ -26,6 +26,7 @@ from backend.tasks.batch import (
     run_video_batch_preset,
 )
 from backend.utils import media_url_to_video
+from backend.utils.task import Task
 from backend.utils.batch_upload import extract_zip_videos, normalize_zip_member_name
 from backend.utils.upload import check_extension, download_file, get_file_extension
 from backend.utils.parser import Parser
@@ -804,3 +805,30 @@ class VideoBatchTaskDatabaseTests(TestCase):
             {"name": "shot_timeline_id", "value": timeline.id.hex},
             calls[0][1],
         )
+
+    def test_task_upload_video_caches_analyser_data_id(self):
+        video = self.make_video()
+        client = Mock()
+        client.upload_file.return_value = "analyser-video-id"
+
+        data_id = Task().upload_video(client, video)
+
+        video.refresh_from_db()
+        self.assertEqual(data_id, "analyser-video-id")
+        self.assertEqual(video.analyser_data_id, "analyser-video-id")
+        self.assertEqual(video.analyser_data_file, video.file)
+        self.assertEqual(video.analyser_data_ext, video.ext)
+        client.upload_file.assert_called_once()
+
+    def test_task_upload_video_reuses_cached_analyser_data_id(self):
+        video = self.make_video()
+        video.analyser_data_id = "cached-analyser-video-id"
+        video.analyser_data_file = video.file
+        video.analyser_data_ext = video.ext
+        video.save()
+        client = Mock()
+
+        data_id = Task().upload_video(client, video)
+
+        self.assertEqual(data_id, "cached-analyser-video-id")
+        client.upload_file.assert_not_called()

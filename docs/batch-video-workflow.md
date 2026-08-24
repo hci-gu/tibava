@@ -106,6 +106,14 @@ Relevant settings:
 
 Run `python3 backend/src/backend/manage.py video_batch_cleanup` to remove abandoned temporary batch directories that no longer have matching database rows.
 
+## Analyser Video Cache
+
+When a plugin uploads a video to the analyser, the returned analyser data id is stored on the `Video` row with the current media file UUID and extension. Later plugins for the same unchanged `Video` reuse that analyser data id and skip the upload call.
+
+Cache lifetime follows the `Video` row and the analyser data store. The cache is invalidated when the `Video` row is deleted. If future code replaces a video's media file in place, it must clear `analyser_data_id`, `analyser_data_file`, and `analyser_data_ext` or update the media file UUID so `Task.upload_video()` treats the cache as stale.
+
+Logs include analyser video cache hit/miss messages from `backend.utils.task`.
+
 ## Seeded QA Account
 
 Local QA account:

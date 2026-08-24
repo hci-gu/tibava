@@ -53,6 +53,9 @@ class Video(models.Model):
     duration = models.FloatField(blank=True, null=True)
     height = models.IntegerField(blank=True, null=True)
     width = models.IntegerField(blank=True, null=True)
+    analyser_data_id = models.CharField(max_length=64, blank=True, null=True)
+    analyser_data_file = models.UUIDField(blank=True, null=True)
+    analyser_data_ext = models.CharField(max_length=256, blank=True, null=True)
 
     def to_dict(self, include_refs_hashes=True, include_refs=False, **kwargs):
         return {

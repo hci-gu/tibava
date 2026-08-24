@@ -137,12 +137,18 @@ UI implementation notes:
 ## Phase 8: Improve Analyser Efficiency
 
 - [ ] Measure how much time repeated analyser-side video upload adds per preset.
-- [ ] Decide the lifetime and invalidation rules for analyser-side uploaded video data ids.
-- [ ] Add a persistent analyser data-id cache per `Video`.
-- [ ] Reuse cached analyser video ids across plugin steps when valid.
-- [ ] Invalidate cached analyser ids when media files are deleted or replaced.
-- [ ] Add metrics/logging for analyser upload cache hits and misses.
+- [x] Decide the lifetime and invalidation rules for analyser-side uploaded video data ids.
+- [x] Add a persistent analyser data-id cache per `Video`.
+- [x] Reuse cached analyser video ids across plugin steps when valid.
+- [x] Invalidate cached analyser ids when media files are deleted or replaced.
+- [x] Add metrics/logging for analyser upload cache hits and misses.
 - [ ] Re-test preset runtime before and after caching.
+
+Analyser cache notes:
+
+- `Video` now stores the analyser data id alongside the media file UUID and extension.
+- `Task.upload_video()` logs cache hits/misses and reuses the cached analyser id when the media identity is unchanged.
+- Deleting a `Video` invalidates the cache with the row. Future in-place media replacement must clear the analyser cache fields or change the media file UUID.
 
 ## Phase 9: Documentation And Rollout
 
