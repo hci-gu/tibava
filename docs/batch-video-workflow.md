@@ -157,6 +157,15 @@ Cache lifetime follows the `Video` row and the analyser data store. The cache is
 
 Logs include analyser video cache hit/miss messages from `backend.utils.task`.
 
+## Performance Measurement
+
+Measured on 2026-08-24 against the local Docker stack using the seeded 7-video batch `3088719230d94c0fa6bc8623ca353a98`, `default_batch_analysis`, and eager scheduler execution:
+
+- Uncached analyser uploads: 47.624 seconds, ending `PARTIAL_ERROR` with 18 completed plugin steps and 1 known thumbnail decode error.
+- Cached analyser uploads: 41.252 seconds, ending `PARTIAL_ERROR` with 18 completed plugin steps and 1 known thumbnail decode error.
+
+This measurement validates that analyser upload caching is working, but it is not a production throughput benchmark because eager execution runs the scheduler inline instead of through normal Celery worker concurrency.
+
 ## Seeded QA Account
 
 Local QA account:

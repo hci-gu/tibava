@@ -71,8 +71,8 @@ Support batch uploads of hundreds of videos, preserve useful folder context afte
 
 ## 7. Performance And Observability
 
-- [ ] Measure baseline preset runtime for the seeded batch before relying on analyser upload caching.
-- [ ] Measure preset runtime after analyser upload caching.
+- [x] Measure baseline preset runtime for the seeded batch before relying on analyser upload caching.
+- [x] Measure preset runtime after analyser upload caching.
 - [x] Add structured logs or metrics for batch ingest duration, queue wait time, plugin runtime, retry count, and cache hit/miss counts.
 - [x] Add a compact operational dashboard or admin view for stuck/running batches if needed.
 - [x] Define alert thresholds for batches stuck in ingesting/running states.
@@ -83,4 +83,4 @@ Support batch uploads of hundreds of videos, preserve useful folder context afte
 - [x] Add release QA instructions that cover browser UI, API, worker restart recovery, and analyser availability.
 - [x] Document recommended limits for maximum files per batch, maximum zip size, and concurrent active batches.
 - [x] Add migration/rollback notes for the analyser cache fields and any scheduler fields.
-- [ ] Run the full backend test suite, frontend build, Docker smoke scripts, and browser smoke test before release.
+- [x] Run the full backend test suite, frontend build, Docker smoke scripts, and browser smoke test before release.
