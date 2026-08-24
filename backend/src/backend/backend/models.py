@@ -92,6 +92,219 @@ def delete_video_file(sender, instance, **kwargs):
         os.remove(path)
 
 
+class VideoBatch(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, blank=True, null=True, on_delete=models.CASCADE
+    )
+    name = models.CharField(max_length=256)
+    date = models.DateTimeField(auto_now_add=True)
+    update_date = models.DateTimeField(auto_now=True)
+
+    STATUS_UPLOADING = "U"
+    STATUS_INGESTING = "I"
+    STATUS_READY = "R"
+    STATUS_PARTIAL_ERROR = "P"
+    STATUS_ERROR = "E"
+    STATUS_RUNNING = "N"
+    STATUS = {
+        STATUS_UPLOADING: "UPLOADING",
+        STATUS_INGESTING: "INGESTING",
+        STATUS_READY: "READY",
+        STATUS_PARTIAL_ERROR: "PARTIAL_ERROR",
+        STATUS_ERROR: "ERROR",
+        STATUS_RUNNING: "RUNNING",
+    }
+    status = models.CharField(
+        max_length=2,
+        choices=[(k, v) for k, v in STATUS.items()],
+        default=STATUS_UPLOADING,
+    )
+
+    SOURCE_FILES = "F"
+    SOURCE_ZIP = "Z"
+    SOURCE = {
+        SOURCE_FILES: "FILES",
+        SOURCE_ZIP: "ZIP",
+    }
+    source_type = models.CharField(
+        max_length=2,
+        choices=[(k, v) for k, v in SOURCE.items()],
+        default=SOURCE_FILES,
+    )
+    source_path = models.CharField(max_length=1024, blank=True, null=True)
+    preset = models.CharField(max_length=256, blank=True, null=True)
+    auto_run_preset = models.BooleanField(default=False)
+
+    total_count = models.IntegerField(default=0)
+    ready_count = models.IntegerField(default=0)
+    failed_count = models.IntegerField(default=0)
+    completed_count = models.IntegerField(default=0)
+
+    def refresh_counters(self, save=True):
+        items = self.items.all()
+        self.total_count = items.count()
+        self.ready_count = items.filter(ingest_status=VideoBatchItem.STATUS_READY).count()
+        self.failed_count = items.filter(ingest_status=VideoBatchItem.STATUS_ERROR).count()
+        self.completed_count = self.ready_count
+
+        if self.total_count == 0 and self.status != self.STATUS_INGESTING:
+            self.status = self.STATUS_ERROR
+        elif self.failed_count == self.total_count:
+            self.status = self.STATUS_ERROR
+        elif self.failed_count > 0:
+            self.status = self.STATUS_PARTIAL_ERROR
+        elif self.ready_count == self.total_count:
+            self.status = self.STATUS_READY
+
+        if save:
+            self.save()
+
+    def to_dict(self, include_items=False, include_videos=False, **kwargs):
+        plugin_runs = self.plugin_runs.all()
+        plugin_total_count = plugin_runs.count()
+        plugin_done_count = plugin_runs.filter(
+            status=VideoBatchPluginRun.STATUS_DONE
+        ).count()
+        plugin_failed_count = plugin_runs.filter(
+            status=VideoBatchPluginRun.STATUS_ERROR
+        ).count()
+        result = {
+            "id": self.id.hex,
+            "name": self.name,
+            "date": self.date,
+            "update_date": self.update_date,
+            "status": self.STATUS[self.status],
+            "source_type": self.SOURCE[self.source_type],
+            "preset": self.preset,
+            "auto_run_preset": self.auto_run_preset,
+            "total_count": self.total_count,
+            "ready_count": self.ready_count,
+            "failed_count": self.failed_count,
+            "completed_count": self.completed_count,
+            "plugin_total_count": plugin_total_count,
+            "plugin_done_count": plugin_done_count,
+            "plugin_failed_count": plugin_failed_count,
+        }
+        if include_items:
+            result["items"] = [
+                item.to_dict(include_video=include_videos)
+                for item in self.items.order_by("original_path", "original_filename")
+            ]
+            result["plugin_runs"] = [
+                plugin_run.to_dict()
+                for plugin_run in plugin_runs.order_by(
+                    "item__original_path", "step_index", "date"
+                )
+            ]
+        return result
+
+
+class VideoBatchItem(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    batch = models.ForeignKey(
+        VideoBatch, on_delete=models.CASCADE, related_name="items"
+    )
+    video = models.ForeignKey(
+        Video, blank=True, null=True, on_delete=models.SET_NULL
+    )
+    original_filename = models.CharField(max_length=512)
+    original_path = models.CharField(max_length=1024, blank=True)
+    source_path = models.CharField(max_length=1024, blank=True, null=True)
+    file_size = models.BigIntegerField(default=0)
+    checksum = models.CharField(max_length=128, blank=True)
+    ingest_error = models.CharField(max_length=1024, blank=True)
+    date = models.DateTimeField(auto_now_add=True)
+    update_date = models.DateTimeField(auto_now=True)
+
+    STATUS_PENDING = "P"
+    STATUS_INGESTING = "I"
+    STATUS_READY = "R"
+    STATUS_ERROR = "E"
+    STATUS = {
+        STATUS_PENDING: "PENDING",
+        STATUS_INGESTING: "INGESTING",
+        STATUS_READY: "READY",
+        STATUS_ERROR: "ERROR",
+    }
+    ingest_status = models.CharField(
+        max_length=2,
+        choices=[(k, v) for k, v in STATUS.items()],
+        default=STATUS_PENDING,
+    )
+
+    def to_dict(self, include_video=False, **kwargs):
+        result = {
+            "id": self.id.hex,
+            "batch_id": self.batch.id.hex,
+            "video_id": self.video.id.hex if self.video else None,
+            "original_filename": self.original_filename,
+            "original_path": self.original_path,
+            "file_size": self.file_size,
+            "checksum": self.checksum,
+            "ingest_status": self.STATUS[self.ingest_status],
+            "ingest_error": self.ingest_error,
+            "date": self.date,
+            "update_date": self.update_date,
+        }
+        if include_video and self.video:
+            result["video"] = self.video.to_dict()
+        return result
+
+
+class VideoBatchPluginRun(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    batch = models.ForeignKey(
+        VideoBatch, on_delete=models.CASCADE, related_name="plugin_runs"
+    )
+    item = models.ForeignKey(
+        VideoBatchItem, on_delete=models.CASCADE, related_name="plugin_runs"
+    )
+    plugin_run = models.ForeignKey(
+        "PluginRun", blank=True, null=True, on_delete=models.SET_NULL
+    )
+    preset = models.CharField(max_length=256)
+    step_index = models.IntegerField(default=0)
+    plugin = models.CharField(max_length=256)
+    error = models.CharField(max_length=1024, blank=True)
+    date = models.DateTimeField(auto_now_add=True)
+    update_date = models.DateTimeField(auto_now=True)
+
+    STATUS_PENDING = "P"
+    STATUS_RUNNING = "R"
+    STATUS_DONE = "D"
+    STATUS_ERROR = "E"
+    STATUS_SKIPPED = "S"
+    STATUS = {
+        STATUS_PENDING: "PENDING",
+        STATUS_RUNNING: "RUNNING",
+        STATUS_DONE: "DONE",
+        STATUS_ERROR: "ERROR",
+        STATUS_SKIPPED: "SKIPPED",
+    }
+    status = models.CharField(
+        max_length=2,
+        choices=[(k, v) for k, v in STATUS.items()],
+        default=STATUS_PENDING,
+    )
+
+    def to_dict(self, **kwargs):
+        return {
+            "id": self.id.hex,
+            "batch_id": self.batch.id.hex,
+            "item_id": self.item.id.hex,
+            "video_id": self.item.video.id.hex if self.item.video else None,
+            "plugin_run_id": self.plugin_run.id.hex if self.plugin_run else None,
+            "preset": self.preset,
+            "step_index": self.step_index,
+            "plugin": self.plugin,
+            "status": self.STATUS[self.status],
+            "error": self.error,
+            "date": self.date,
+            "update_date": self.update_date,
+        }
+
+
 class Plugin(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 

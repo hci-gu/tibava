@@ -1,29 +1,14 @@
-import os
-import shutil
-import sys
 import json
-import uuid
 import logging
-import traceback
-import tempfile
-import logging
-
-from urllib.parse import urlparse
-import imageio
 from backend.plugin_manager import PluginManager
 
 from backend.utils import (
-    download_url,
-    download_file,
-    get_file_extension,
     media_url_to_video,
-    media_path_to_video,
-    media_dir_to_video,
 )
+from backend.utils.video_ingest import ingest_video_file
 
 from django.views import View
 from django.http import JsonResponse
-from django.conf import settings
 
 # from django.core.exceptions import BadRequest
 
@@ -52,68 +37,32 @@ class VideoUpload(View):
                 return JsonResponse(
                     {"status": "error", "type": "database_error"}, status=500
                 )
-            video_id_uuid = uuid.uuid4()
-            video_id = video_id_uuid.hex
             if "file" in request.FILES:
-                output_dir = media_dir_to_video(video_id)
-
-                download_result = download_file(
-                    output_dir=output_dir,
-                    output_name=video_id,
+                ingest_result = ingest_video_file(
                     file=request.FILES["file"],
-                    max_size=request.user.max_video_size,
-                    extensions=(".mkv", ".mp4", ".ogv"),
-                )
-
-                if download_result["status"] != "ok":
-                    logger.error("VideoUpload::failed")
-                    return JsonResponse(download_result, status=500)
-
-                ext = get_file_extension(request.FILES["file"].name)
-
-                reader = imageio.get_reader(download_result["path"])
-                fps = reader.get_meta_data()["fps"]
-                duration = reader.get_meta_data()["duration"]
-                size = reader.get_meta_data()["size"]
-                meta = {
-                    "name": request.POST.get("title"),
-                    "width": size[0],
-                    "height": size[1],
-                    "ext": ext,
-                    "fps": fps,
-                    "duration": duration,
-                }
-                video_db, created = Video.objects.get_or_create(
-                    name=meta["name"],
-                    id=video_id_uuid,
-                    file=video_id_uuid,
-                    ext=meta["ext"],
-                    fps=meta["fps"],
-                    duration=meta["duration"],
-                    width=meta["width"],
-                    height=meta["height"],
                     owner=request.user,
+                    title=request.POST.get("title"),
+                    max_size=request.user.max_video_size,
                 )
-                if not created:
-                    logger.error("VideoUpload::database_create_failed")
-                    return JsonResponse(
-                        {"status": "error", "type": "database_error"}, status=500
-                    )
 
-                analyers = request.POST.get("analyser").split(",")
+                if ingest_result["status"] != "ok":
+                    logger.error("VideoUpload::failed")
+                    return JsonResponse(ingest_result, status=500)
+
+                video_db = ingest_result["video"]
+                analyers = request.POST.get("analyser", "").split(",")
+                analyers = [x for x in analyers if x]
                 self.submit_analyse(
                     plugins=["thumbnail"] + analyers, video=video_db, user=request.user
                 )
 
-                video_id_hex = video_db.id.hex if not video_db.file.hex else video_db.id.hex
                 return JsonResponse(
                     {
                         "status": "ok",
                         "entries": [
                             {
-                                "id": video_id,
-                                **video_db.to_dict(),
-                                "url": media_url_to_video(video_id_hex, meta["ext"]),
+                                "id": video_db.id.hex,
+                                **ingest_result["entry"],
                             }
                         ],
                     }

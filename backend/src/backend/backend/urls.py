@@ -11,6 +11,31 @@ urlpatterns = [
     path("user/get", views.UserGet.as_view(), name="user_get"),
     #
     path("video/upload", views.VideoUpload.as_view(), name="video_upload"),
+    path("video/batch/upload", views.VideoBatchUpload.as_view(), name="video_batch_upload"),
+    path("video/batch/list", views.VideoBatchList.as_view(), name="video_batch_list"),
+    path("video/batch/get", views.VideoBatchGet.as_view(), name="video_batch_get"),
+    path(
+        "video/batch/retry-failed",
+        views.VideoBatchRetryFailed.as_view(),
+        name="video_batch_retry_failed",
+    ),
+    path("video/batch/delete", views.VideoBatchDelete.as_view(), name="video_batch_delete"),
+    path("video/batch/cancel", views.VideoBatchCancel.as_view(), name="video_batch_cancel"),
+    path(
+        "video/batch/presets",
+        views.VideoBatchPresetList.as_view(),
+        name="video_batch_presets",
+    ),
+    path(
+        "video/batch/run-preset",
+        views.VideoBatchRunPreset.as_view(),
+        name="video_batch_run_preset",
+    ),
+    path(
+        "video/batch/retry-failed-plugin-steps",
+        views.VideoBatchRetryFailedPluginSteps.as_view(),
+        name="video_batch_retry_failed_plugin_steps",
+    ),
     path("video/list", views.VideoList.as_view(), name="video_list"),
     path("video/get", views.VideoGet.as_view(), name="video_get"),
     path("video/rename", views.VideoRename.as_view(), name="video_rename"),

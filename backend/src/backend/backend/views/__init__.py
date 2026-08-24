@@ -1,4 +1,5 @@
 from .video import *
+from .video_batch import *
 from .video_export import *
 from .timeline import *
 from .timeline_import import *

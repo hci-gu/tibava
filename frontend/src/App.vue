@@ -8,6 +8,10 @@
         <v-icon left color="primary">mdi-movie</v-icon>
         Videos
       </v-btn>
+      <v-btn tile text class="ml-n2" to="/batches">
+        <v-icon left color="primary">mdi-folder-multiple-video</v-icon>
+        Batches
+      </v-btn>
 
       <v-spacer></v-spacer>
       <PluginMenu style="margin-right: 10px;" v-if="videoView" />

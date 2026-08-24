@@ -77,6 +77,7 @@ class PluginManager:
             plugin_run = PluginRun.objects.create(
                 video=video, type=plugin, status=PluginRun.STATUS_QUEUED
             )
+            result["plugin_run"] = plugin_run.id.hex
         if run_async:
             run_plugin.apply_async(
                 (

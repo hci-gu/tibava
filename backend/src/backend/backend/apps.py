@@ -12,7 +12,8 @@ class BackendConfig(AppConfig):
     name = "backend"
 
     def ready(self):
-        if 'backend_pluginrun' not in connection.introspection.table_names():
+        table_names = connection.introspection.table_names()
+        if 'backend_pluginrun' not in table_names:
             return
         # import here otherwise django complains
         from tibava.celery import app
@@ -45,3 +46,45 @@ class BackendConfig(AppConfig):
                 f'Setting the status of {len(open_runs)} non-running PluginRuns to UNKNOWN'
             )
             open_runs.update(status=PluginRun.STATUS_UNKNOWN)
+
+        if 'backend_videobatch' not in table_names:
+            return
+
+        from backend.models import VideoBatch, VideoBatchItem, VideoBatchPluginRun
+
+        interrupted_items = VideoBatchItem.objects.filter(
+            ingest_status=VideoBatchItem.STATUS_INGESTING
+        )
+        if interrupted_items.exists():
+            logger.warning(
+                f'Setting {interrupted_items.count()} interrupted batch items to ERROR'
+            )
+            interrupted_items.update(
+                ingest_status=VideoBatchItem.STATUS_ERROR,
+                ingest_error='interrupted',
+            )
+
+        interrupted_plugin_steps = VideoBatchPluginRun.objects.filter(
+            status=VideoBatchPluginRun.STATUS_RUNNING
+        )
+        if interrupted_plugin_steps.exists():
+            logger.warning(
+                f'Setting {interrupted_plugin_steps.count()} interrupted batch plugin steps to ERROR'
+            )
+            interrupted_plugin_steps.update(
+                status=VideoBatchPluginRun.STATUS_ERROR,
+                error='interrupted',
+            )
+
+        interrupted_batches = VideoBatch.objects.filter(
+            status__in=[
+                VideoBatch.STATUS_UPLOADING,
+                VideoBatch.STATUS_INGESTING,
+                VideoBatch.STATUS_RUNNING,
+            ]
+        )
+        if interrupted_batches.exists():
+            logger.warning(
+                f'Setting {interrupted_batches.count()} interrupted batches to PARTIAL_ERROR'
+            )
+            interrupted_batches.update(status=VideoBatch.STATUS_PARTIAL_ERROR)

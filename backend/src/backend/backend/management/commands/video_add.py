@@ -1,16 +1,9 @@
 import os
-import json
 from django.core.management.base import BaseCommand, CommandError
-from backend.models import Video
 import pathlib
-import imageio
-import shutil
-import uuid
 from django.contrib import auth
-from django.conf import settings
 
-
-from backend.plugin_manager import PluginManager
+from backend.utils.video_ingest import PathUploadFile, ingest_video_file
 
 
 class Command(BaseCommand):
@@ -40,31 +33,16 @@ class Command(BaseCommand):
                     elif options["name"] == "filename":
                         video_name = path.stem
 
-                    reader = imageio.get_reader(file_path)
-                    fps = reader.get_meta_data()["fps"]
-                    duration = reader.get_meta_data()["duration"]
-                    size = reader.get_meta_data()["size"]
-
-                    ext = path.suffix
-
-                    video_id_uuid = uuid.uuid4()
-                    video_id = video_id_uuid.hex
-
-                    output_dir = os.path.join(settings.MEDIA_ROOT)
-                    shutil.copyfile(file_path, os.path.join(output_dir, f"{video_id}{ext}"))
-
-                    video_db, created = Video.objects.get_or_create(
-                        name=video_name,
-                        id=video_id_uuid,
-                        ext=ext,
-                        fps=fps,
-                        duration=duration,
-                        width=size[0],
-                        height=size[1],
+                    result = ingest_video_file(
+                        PathUploadFile(file_path, name=path.name),
                         owner=user,
+                        title=video_name,
                     )
 
-                    print(video_id_uuid.hex)
+                    if result["status"] == "ok":
+                        print(result["video"].id.hex)
+                    else:
+                        print(f"{file_path}: {result.get('type', 'error')}")
 
         self.stdout.write(self.style.SUCCESS(f"Videos added"))
         # else:
