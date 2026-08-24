@@ -45,6 +45,22 @@ def enqueue_batch_ingest(batch):
     ingest_video_batch.apply_async((batch.id,))
 
 
+def user_has_active_batch_capacity(batch):
+    active_count = (
+        VideoBatch.objects.filter(
+            owner=batch.owner,
+            status__in=[
+                VideoBatch.STATUS_UPLOADING,
+                VideoBatch.STATUS_INGESTING,
+                VideoBatch.STATUS_RUNNING,
+            ],
+        )
+        .exclude(id=batch.id)
+        .count()
+    )
+    return active_count < get_max_active_batch_ingests_per_user()
+
+
 class VideoBatchUpload(View):
     def post(self, request):
         try:
@@ -343,6 +359,12 @@ class VideoBatchRunPreset(View):
             if validation["status"] != "ok":
                 return JsonResponse(validation, status=500)
 
+            if not user_has_active_batch_capacity(batch):
+                return JsonResponse(
+                    {"status": "error", "type": "too_many_active_batches"},
+                    status=500,
+                )
+
             batch.preset = preset
             batch.save(update_fields=["preset", "update_date"])
             run_video_batch_preset.apply_async((batch.id, preset))
@@ -376,6 +398,11 @@ class VideoBatchRetryFailedPluginSteps(View):
             ).update(status=VideoBatchPluginRun.STATUS_PENDING, error="")
 
             preset = data.get("preset") or batch.preset or DEFAULT_BATCH_PRESET
+            if not user_has_active_batch_capacity(batch):
+                return JsonResponse(
+                    {"status": "error", "type": "too_many_active_batches"},
+                    status=500,
+                )
             run_video_batch_preset.apply_async((batch.id, preset))
             return JsonResponse({"status": "ok", "batch_id": batch.id.hex})
         except Exception:

@@ -102,7 +102,11 @@ Relevant settings:
 - `MAX_BATCH_FILE_SIZE`, optional per-file zip entry limit.
 - `MAX_ACTIVE_BATCH_INGESTS_PER_USER`, default `1`.
 - `MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH`, default `1`.
+- `MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL`, default `4`.
+- `MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER`, default `2`.
 - `BATCH_UPLOAD_ROOT`, default `/tmp/video_batches`.
+
+Preset execution uses a scheduler task plus one Celery task per batch plugin step. The scheduler dispatches only dependency-ready steps and applies the per-batch, per-user, and global plugin-run limits before starting more analyser work.
 
 Run `python3 backend/src/backend/manage.py video_batch_cleanup` to remove abandoned temporary batch directories that no longer have matching database rows.
 

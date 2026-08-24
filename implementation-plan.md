@@ -37,21 +37,21 @@ Support batch uploads of hundreds of videos, preserve useful folder context afte
 
 ## 3. Explicit Batch Scheduler
 
-- [ ] Replace the current simple sequential preset runner with an explicit scheduler loop.
-- [ ] Add configurable per-batch plugin parallelism.
-- [ ] Add configurable global analyser backpressure so one large batch cannot consume all worker capacity.
-- [ ] Add per-user active batch limits that account for ingest and plugin execution.
-- [ ] Ensure retry jobs enter the same scheduler path as initial jobs.
-- [ ] Make scheduler state recover cleanly after backend, Celery, or analyser restarts.
-- [ ] Add tests for scheduler ordering, limits, retries, and restart recovery.
+- [x] Replace the current simple sequential preset runner with an explicit scheduler loop.
+- [x] Add configurable per-batch plugin parallelism.
+- [x] Add configurable global analyser backpressure so one large batch cannot consume all worker capacity.
+- [x] Add per-user active batch limits that account for ingest and plugin execution.
+- [x] Ensure retry jobs enter the same scheduler path as initial jobs.
+- [x] Make scheduler state recover cleanly after backend, Celery, or analyser restarts.
+- [x] Add tests for scheduler ordering, limits, retries, and restart recovery.
 
 ## 4. Cancellation, Deletion, And Edge Cases
 
-- [ ] Add cancellation behavior for already-started analyser plugin runs if the analyser exposes a supported cancel operation.
-- [ ] Add clear handling for videos deleted while a batch is queued or running.
+- [x] Add cancellation behavior for already-started analyser plugin runs if the analyser exposes a supported cancel operation.
+- [x] Add clear handling for videos deleted while a batch is queued or running.
 - [ ] Decide whether the known `thumbnail_generator` decode failure for `user-3/Tagesschau-oil.mp4` should be fixed, skipped, or documented as an analyser limitation.
-- [ ] Add user-facing error messages for skipped/deleted/cancelled plugin work.
-- [ ] Add regression tests for deleted-video and mid-plugin-cancel behavior.
+- [x] Add user-facing error messages for skipped/deleted/cancelled plugin work.
+- [x] Add regression tests for deleted-video and mid-plugin-cancel behavior.
 
 ## 5. Preset Management
 

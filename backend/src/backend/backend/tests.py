@@ -23,6 +23,7 @@ from backend.models import (
 from backend.tasks.batch import (
     get_completed_step_outputs,
     ingest_video_batch,
+    run_video_batch_plugin_step,
     run_video_batch_preset,
 )
 from backend.utils import media_url_to_video
@@ -47,6 +48,7 @@ from backend.views.video_batch import (
     VideoBatchPresetList,
     VideoBatchRetryFailed,
     VideoBatchRetryFailedPluginSteps,
+    VideoBatchRunPreset,
     VideoBatchUpload,
 )
 
@@ -399,21 +401,30 @@ class VideoBatchViewTests(SimpleTestCase):
 
     def test_retry_failed_plugin_steps_enqueues_preset(self):
         batch_id = uuid.uuid4()
-        fake_batch = SimpleNamespace(id=batch_id, preset="default_batch_analysis")
+        request_user = SimpleNamespace(is_authenticated=True)
+        fake_batch = SimpleNamespace(
+            id=batch_id,
+            owner=request_user,
+            preset="default_batch_analysis",
+        )
         request = RequestFactory().post(
             "/video/batch/retry-failed-plugin-steps",
             data=f'{{"id":"{batch_id.hex}"}}',
             content_type="application/json",
         )
-        request.user = SimpleNamespace(is_authenticated=True)
+        request.user = request_user
 
         with patch("backend.views.video_batch.VideoBatch.objects.get") as get_batch:
             with patch("backend.views.video_batch.VideoBatchPluginRun.objects.filter") as filter_steps:
                 with patch("backend.views.video_batch.run_video_batch_preset") as run_preset:
-                    get_batch.return_value = fake_batch
-                    filter_steps.return_value.update.return_value = 1
+                    with patch(
+                        "backend.views.video_batch.user_has_active_batch_capacity",
+                        return_value=True,
+                    ):
+                        get_batch.return_value = fake_batch
+                        filter_steps.return_value.update.return_value = 1
 
-                    response = VideoBatchRetryFailedPluginSteps.as_view()(request)
+                        response = VideoBatchRetryFailedPluginSteps.as_view()(request)
 
         self.assertEqual(response.status_code, 200)
         run_preset.apply_async.assert_called_once_with(
@@ -686,6 +697,29 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(delete_response.status_code, 200)
         self.assertFalse(VideoBatch.objects.filter(id=batch.id).exists())
 
+    def test_run_preset_rejects_when_user_has_another_active_batch(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Ready")
+        VideoBatch.objects.create(
+            owner=self.user,
+            name="Already running",
+            status=VideoBatch.STATUS_RUNNING,
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/run-preset",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+
+        with patch("backend.views.video_batch.run_video_batch_preset") as run_preset:
+            response = VideoBatchRunPreset.as_view()(request)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(json.loads(response.content)["type"], "too_many_active_batches")
+        run_preset.apply_async.assert_not_called()
+
 
 class VideoBatchTaskDatabaseTests(TestCase):
     def setUp(self):
@@ -764,6 +798,7 @@ class VideoBatchTaskDatabaseTests(TestCase):
             self.assertEqual(batch.ready_count, 1)
             run_preset.assert_called_once_with((batch.id, DEFAULT_BATCH_PRESET))
 
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_run_video_batch_preset_creates_done_step_rows(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Preset")
         item = VideoBatchItem.objects.create(
@@ -783,7 +818,19 @@ class VideoBatchTaskDatabaseTests(TestCase):
                 )
                 result = {}
                 if plugin == "shotdetection":
-                    result = {"timelines": {"shots": "timeline-id"}}
+                    shot_result = PluginRunResult.objects.create(
+                        plugin_run=plugin_run,
+                        name="shots",
+                        data_id="shots-data",
+                        type=PluginRunResult.TYPE_SHOTS,
+                    )
+                    timeline = Timeline.objects.create(
+                        video=video,
+                        plugin_run_result=shot_result,
+                        name="Shots",
+                        type=Timeline.TYPE_PLUGIN_RESULT,
+                    )
+                    result = {"timelines": {"shots": timeline.id.hex}}
                 return {
                     "status": True,
                     "plugin_run": plugin_run.id.hex,
@@ -804,6 +851,7 @@ class VideoBatchTaskDatabaseTests(TestCase):
             ],
         )
 
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_retry_preset_reconstructs_timeline_dependency_from_done_step(self):
         video = self.make_video()
         batch = VideoBatch.objects.create(owner=self.user, name="Resume")
@@ -884,6 +932,133 @@ class VideoBatchTaskDatabaseTests(TestCase):
             {"name": "shot_timeline_id", "value": timeline.id.hex},
             calls[0][1],
         )
+
+    @override_settings(MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH=1)
+    def test_batch_scheduler_respects_per_batch_parallelism_limit(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Limited")
+        for name in ["a.mp4", "b.mp4"]:
+            VideoBatchItem.objects.create(
+                batch=batch,
+                video=self.make_video(name),
+                original_filename=name,
+                original_path=name,
+                ingest_status=VideoBatchItem.STATUS_READY,
+            )
+
+        with patch("backend.tasks.batch.run_video_batch_plugin_step.apply_async") as apply_async:
+            run_video_batch_preset(batch.id, "default_batch_analysis")
+
+        self.assertEqual(
+            VideoBatchPluginRun.objects.filter(
+                batch=batch,
+                status=VideoBatchPluginRun.STATUS_RUNNING,
+            ).count(),
+            1,
+        )
+        apply_async.assert_called_once()
+
+    @override_settings(MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL=1)
+    def test_batch_scheduler_respects_global_plugin_backpressure(self):
+        other_batch = VideoBatch.objects.create(owner=self.user, name="Other")
+        other_item = VideoBatchItem.objects.create(
+            batch=other_batch,
+            video=self.make_video("Other"),
+            original_filename="other.mp4",
+            original_path="other.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        VideoBatchPluginRun.objects.create(
+            batch=other_batch,
+            item=other_item,
+            preset="default_batch_analysis",
+            step_index=0,
+            plugin="thumbnail",
+            status=VideoBatchPluginRun.STATUS_RUNNING,
+        )
+        batch = VideoBatch.objects.create(owner=self.user, name="Backpressure")
+        VideoBatchItem.objects.create(
+            batch=batch,
+            video=self.make_video("Video"),
+            original_filename="video.mp4",
+            original_path="video.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+
+        with patch("backend.tasks.batch.run_video_batch_plugin_step.apply_async") as apply_async:
+            run_video_batch_preset(batch.id, "default_batch_analysis")
+
+        self.assertFalse(
+            VideoBatchPluginRun.objects.filter(
+                batch=batch,
+                status=VideoBatchPluginRun.STATUS_RUNNING,
+            ).exists()
+        )
+        apply_async.assert_not_called()
+
+    def test_batch_scheduler_marks_deleted_video_items(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Deleted video")
+        VideoBatchItem.objects.create(
+            batch=batch,
+            video=None,
+            original_filename="deleted.mp4",
+            original_path="deleted.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+
+        run_video_batch_preset(batch.id, "default_batch_analysis")
+
+        item = batch.items.get()
+        item.refresh_from_db()
+        self.assertEqual(item.ingest_status, VideoBatchItem.STATUS_ERROR)
+        self.assertEqual(item.ingest_error, "video_deleted")
+
+    def test_batch_plugin_step_respects_mid_run_cancellation(self):
+        batch = VideoBatch.objects.create(
+            owner=self.user,
+            name="Cancel during plugin",
+            status=VideoBatch.STATUS_RUNNING,
+        )
+        item = VideoBatchItem.objects.create(
+            batch=batch,
+            video=self.make_video(),
+            original_filename="video.mp4",
+            original_path="video.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        tracker = VideoBatchPluginRun.objects.create(
+            batch=batch,
+            item=item,
+            preset="default_batch_analysis",
+            step_index=0,
+            plugin="thumbnail",
+            status=VideoBatchPluginRun.STATUS_RUNNING,
+        )
+
+        class FakePluginManager:
+            def __call__(self, plugin, video, user, parameters, run_async):
+                batch.status = VideoBatch.STATUS_CANCELLED
+                batch.save(update_fields=["status", "update_date"])
+                plugin_run = PluginRun.objects.create(
+                    video=video,
+                    type=plugin,
+                    status=PluginRun.STATUS_DONE,
+                )
+                return {
+                    "status": True,
+                    "plugin_run": plugin_run.id.hex,
+                    "result": {},
+                }
+
+        with patch("backend.tasks.batch.PluginManager", return_value=FakePluginManager()):
+            run_video_batch_plugin_step(
+                tracker.id,
+                batch.id,
+                "default_batch_analysis",
+            )
+
+        tracker.refresh_from_db()
+        self.assertEqual(tracker.status, VideoBatchPluginRun.STATUS_SKIPPED)
+        self.assertEqual(tracker.error, "cancelled")
 
     def test_task_upload_video_caches_analyser_data_id(self):
         video = self.make_video()

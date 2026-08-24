@@ -14,6 +14,8 @@ DEFAULT_MAX_BATCH_FILES = 500
 DEFAULT_MAX_BATCH_TOTAL_SIZE = 250 * 1024 * 1024 * 1024
 DEFAULT_MAX_ACTIVE_BATCH_INGESTS_PER_USER = 1
 DEFAULT_MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH = 1
+DEFAULT_MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL = 4
+DEFAULT_MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER = 2
 
 
 def get_batch_upload_root():
@@ -41,6 +43,22 @@ def get_max_active_plugin_runs_per_batch():
         settings,
         "MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH",
         DEFAULT_MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH,
+    )
+
+
+def get_max_active_batch_plugin_runs_global():
+    return getattr(
+        settings,
+        "MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL",
+        DEFAULT_MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL,
+    )
+
+
+def get_max_active_batch_plugin_runs_per_user():
+    return getattr(
+        settings,
+        "MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER",
+        DEFAULT_MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER,
     )
 
 

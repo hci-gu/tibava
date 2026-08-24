@@ -57,6 +57,11 @@ class BackendConfig(AppConfig):
                     "backend.tasks.batch.run_video_batch_preset",
                 }:
                     celery_batch_runs.append(args[0])
+                    continue
+
+                if run.get("name") == "backend.tasks.batch.run_video_batch_plugin_step":
+                    if len(args) > 1:
+                        celery_batch_runs.append(args[1])
 
         open_runs = PluginRun.objects.exclude(Q(status=PluginRun.STATUS_DONE)|
                                               Q(status=PluginRun.STATUS_ERROR)|
