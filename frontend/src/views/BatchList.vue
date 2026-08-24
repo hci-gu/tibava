@@ -16,6 +16,12 @@
         item-key="id"
         @click:row="showBatch"
       >
+        <template v-slot:loading>
+          <span>Loading batches...</span>
+        </template>
+        <template v-slot:no-data>
+          <span>No batches yet.</span>
+        </template>
         <template v-slot:item.status="{ item }">
           <v-chip small :color="statusColor(item.status)" dark>{{ item.status }}</v-chip>
         </template>
@@ -42,6 +48,8 @@ export default {
         { text: "Videos", value: "total_count" },
         { text: "Ready", value: "ready_count" },
         { text: "Failed", value: "failed_count" },
+        { text: "Plugins done", value: "plugin_done_count" },
+        { text: "Plugins failed", value: "plugin_failed_count" },
         { text: "Progress", value: "progress", sortable: false },
       ],
     };

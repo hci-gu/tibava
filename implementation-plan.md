@@ -113,16 +113,22 @@ Preset decision notes:
 
 ## Phase 7: Improve Batch UI
 
-- [ ] Add a true folder tree or grouped table view for zip-relative paths.
-- [ ] Add stable per-plugin columns instead of only compact plugin chips.
-- [ ] Add clearer batch-level status summaries.
-- [ ] Add visible counts for pending, ingesting, ready, failed, running, done, and skipped items.
-- [ ] Add pagination or virtual scrolling for hundreds of rows.
-- [ ] Add bulk selection within a batch.
-- [ ] Add actions scoped to selected rows.
-- [ ] Add clearer error messages and retry affordances.
-- [ ] Add confirmation dialogs for destructive batch actions.
-- [ ] Add loading and empty states for batch list and detail views.
+- [x] Add a true folder tree or grouped table view for zip-relative paths.
+- [x] Add stable per-plugin columns instead of only compact plugin chips.
+- [x] Add clearer batch-level status summaries.
+- [x] Add visible counts for pending, ingesting, ready, failed, running, done, and skipped items.
+- [x] Add pagination or virtual scrolling for hundreds of rows.
+- [x] Add bulk selection within a batch.
+- [x] Add actions scoped to selected rows.
+- [x] Add clearer error messages and retry affordances.
+- [x] Add confirmation dialogs for destructive batch actions.
+- [x] Add loading and empty states for batch list and detail views.
+
+UI implementation notes:
+
+- Batch detail now groups rows by folder path, uses one stable column per plugin, defaults to 50 rows per page, supports row selection, and has confirmation dialogs for run/cancel/delete.
+- Batch list now includes plugin done/failed counts plus loading and empty table states.
+- Frontend build passes; visual browser QA remains open in the verification log.
 
 ## Phase 8: Improve Analyser Efficiency
 
