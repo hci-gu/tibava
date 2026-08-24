@@ -100,16 +100,20 @@ Preset decision notes:
 
 ## Phase 6: Add Integration Tests
 
-- [ ] Add database-backed tests for `VideoBatch` and `VideoBatchItem`.
-- [ ] Add API tests for multi-file batch upload.
-- [ ] Add API tests for zip batch upload.
-- [ ] Add API tests for batch list and detail ownership restrictions.
-- [ ] Add API tests for retry ingest, retry plugin steps, cancel, and delete.
-- [ ] Add Celery eager-mode tests for batch ingest.
-- [ ] Add Celery eager-mode tests for preset execution.
-- [ ] Add dependency resolution tests using real `Timeline` rows.
+- [x] Add database-backed tests for `VideoBatch` and `VideoBatchItem`.
+- [x] Add API tests for multi-file batch upload.
+- [x] Add API tests for zip batch upload.
+- [x] Add API tests for batch list and detail ownership restrictions.
+- [x] Add API tests for retry ingest, retry plugin steps, cancel, and delete.
+- [x] Add Celery eager-mode tests for batch ingest.
+- [x] Add Celery eager-mode tests for preset execution.
+- [x] Add dependency resolution tests using real `Timeline` rows.
 - [ ] Add a scripted Docker smoke test for full upload-to-ingest behavior.
 - [ ] Add a scripted Docker smoke test for preset execution against the analyser.
+
+Integration test notes:
+
+- `backend.tests` now includes 30 tests covering model counters, upload/list/detail/action APIs, ingest task execution, preset execution, and timeline dependency reconstruction.
 
 ## Phase 7: Improve Batch UI
 
