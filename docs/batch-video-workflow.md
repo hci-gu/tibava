@@ -106,6 +106,18 @@ Relevant settings:
 
 Run `python3 backend/src/backend/manage.py video_batch_cleanup` to remove abandoned temporary batch directories that no longer have matching database rows.
 
+## Docker Smoke Test
+
+Run the API smoke test against a local Docker stack with the backend exposed on `127.0.0.1:8000`:
+
+```powershell
+.\scripts\batch-api-smoke.ps1
+```
+
+The script logs in as `test@email.com`, copies two existing videos owned by that account into temporary loose-file and zip uploads, verifies ingest/path preservation, runs `default_batch_analysis` against the analyser, retries failed ingest work, cancels a disposable batch, deletes disposable batches, and removes its temporary files.
+
+The local run usually takes under a minute when the backend, Celery worker, analyser, and inference services are already healthy. Use `-VideoPaths` to provide explicit local sample videos when the seeded account has no existing media. Use `-SkipPreset` for a faster ingest-only smoke test when the analyser is intentionally offline.
+
 ## Analyser Video Cache
 
 When a plugin uploads a video to the analyser, the returned analyser data id is stored on the `Video` row with the current media file UUID and extension. Later plugins for the same unchanged `Video` reuse that analyser data id and skip the upload call.

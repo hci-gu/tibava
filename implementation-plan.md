@@ -63,11 +63,11 @@ Support batch uploads of hundreds of videos, preserve useful folder context afte
 
 ## 6. Docker Smoke Tests
 
-- [ ] Add a scripted Docker smoke test for full upload-to-ingest behavior.
-- [ ] Add a scripted Docker smoke test for preset execution against the analyser.
-- [ ] Include login using `test@email.com` / `password123`.
-- [ ] Include loose multi-file upload, nested zip upload, preset run, retry failed work, cancel running batch, and delete batch.
-- [ ] Document expected smoke-test runtime and required local services.
+- [x] Add a scripted Docker smoke test for full upload-to-ingest behavior.
+- [x] Add a scripted Docker smoke test for preset execution against the analyser.
+- [x] Include login using `test@email.com` / `password123`.
+- [x] Include loose multi-file upload, nested zip upload, preset run, retry failed work, cancel running batch, and delete batch.
+- [x] Document expected smoke-test runtime and required local services.
 
 ## 7. Performance And Observability
 
