@@ -180,6 +180,10 @@ export const useAnnotationStore = defineStore('annotation', {
         updateStore(annotations) {
             annotations.forEach((e) => {
                 if (e.id in this.annotations) {
+                    Vue.set(this.annotations, e.id, {
+                        ...this.annotations[e.id],
+                        ...e,
+                    });
                     return;
                 }
                 Vue.set(this.annotations, e.id, e);

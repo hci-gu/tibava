@@ -50,7 +50,9 @@ class TimelineListAll(View):
             
             timelines = (Timeline.objects.filter(video__owner=request.user)
                                          .prefetch_related('plugin_run_result'))
-            add_results_type = request.GET.get("add_results_type", False)
+            add_results_type = (
+                request.GET.get("add_results_type", "false").lower() == "true"
+            )
 
             entries = []
             for timeline in timelines:

@@ -8,6 +8,21 @@ import { useTimelineStore } from "./timeline";
 import { useTimelineSegmentStore } from "./timeline_segment";
 import { usePluginRunResultStore } from "./plugin_run_result";
 
+function isShotTimeline(timeline, pluginRunResultStore) {
+  if (!timeline || timeline.type !== "ANNOTATION") {
+    return false;
+  }
+
+  if (timeline.plugin_run_result_id) {
+    const result = pluginRunResultStore.get(timeline.plugin_run_result_id);
+    if (result && result.type === "SHOTS") {
+      return true;
+    }
+  }
+
+  return timeline.name && timeline.name.toLowerCase() === "shots";
+}
+
 export const useShotStore = defineStore("shot", {
   state: () => {
     return {
@@ -19,13 +34,12 @@ export const useShotStore = defineStore("shot", {
     shotsList() {
 
       const timelineStore = useTimelineStore();
+      const pluginRunResultStore = usePluginRunResultStore();
       const playerStore = usePlayerStore();
 
       let timeline = timelineStore
         .forVideo(playerStore.videoId)
-        .filter((e) => {
-          return e.type == "ANNOTATION";
-        })
+        .filter((e) => isShotTimeline(e, pluginRunResultStore))
 
       if (timeline.length) {
         return timeline.map((e, i) => {
@@ -54,12 +68,10 @@ export const useShotStore = defineStore("shot", {
 
         let timeline = timelineStore
           .forVideo(playerStore.videoId)
-          .filter((e) => {
-            return e.type == "ANNOTATION";
-          })
+          .filter((e) => isShotTimeline(e, pluginRunResultStore))
 
         if (!timeline.length) {
-          console.error("Shots: No annotation timeline")
+          console.error("Shots: No shot timeline")
           return results
         }
         selectedShots = timeline[0].id
@@ -173,12 +185,15 @@ export const useShotStore = defineStore("shot", {
       }
       this.isLoading = true;
 
+      const playerStore = usePlayerStore();
+      const timelineStore = useTimelineStore();
+      const pluginRunResultStore = usePluginRunResultStore();
+
       //use video id or take it from the current video
       let params = {};
       if (videoId) {
         params.video_id = videoId;
       } else {
-        const playerStore = usePlayerStore();
         const videoId = playerStore.videoId;
         if (videoId) {
           params.video_id = videoId;
@@ -192,13 +207,11 @@ export const useShotStore = defineStore("shot", {
             if (!selectedShots) {
               let timeline = timelineStore
                 .forVideo(playerStore.videoId)
-                .filter((e) => {
-                  return e.type == "ANNOTATION";
-                })
+                .filter((e) => isShotTimeline(e, pluginRunResultStore))
 
               if (!timeline.length) {
-                console.error("Shots: No annotation timeline")
-                return results
+                console.error("Shots: No shot timeline")
+                return
               }
               selectedShots = timeline[0].id;
             }

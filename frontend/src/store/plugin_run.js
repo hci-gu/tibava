@@ -169,22 +169,27 @@ export const usePluginRunStore = defineStore("pluginRun", {
                 useTimelineSegmentAnnotationStore();
               const clusterTimelineItemStore = useClusterTimelineItemStore();
               // start fetching new plugin run results
-              result.newDone.forEach((e) => {
-                let promises = [];
-                promises.push(pluginRunResultStore.fetchForVideo({ pluginRunId: e.id }));
-                promises.push(annotationCategoryStore.clearStore());
-                promises.push(annotationStore.clearStore());
-                promises.push(annotationCategoryStore.fetchForVideo({ videoId }));
-                promises.push(annotationStore.fetchForVideo({ videoId }));
+              result.newDone.forEach(async (pluginRunId) => {
+                await pluginRunResultStore.fetchForVideo({
+                  videoId,
+                  pluginRunId,
+                  addResults: true,
+                  force: true,
+                });
 
-                promises.push(timelineSegmentStore.fetchForVideo({ videoId }));
-                promises.push(timelineSegmentAnnotationStore.fetchForVideo({ videoId }));
-                promises.push(clusterTimelineItemStore.fetchAll(videoId));
-                Promise.all(promises).then(
-                  () => {
-                    timelineStore.fetchForVideo({ videoId })
-                  }
-                )
+                await timelineStore.fetchForVideo({
+                  videoId,
+                  clear: false,
+                  force: true,
+                });
+
+                await Promise.all([
+                  annotationCategoryStore.fetchForVideo({ videoId }),
+                  annotationStore.fetchForVideo({ videoId }),
+                  timelineSegmentStore.fetchForVideo({ videoId, clear: false, force: true }),
+                  timelineSegmentAnnotationStore.fetchForVideo({ videoId, clear: false, force: true }),
+                  clusterTimelineItemStore.fetchAll(videoId),
+                ]);
               })
             }
 
@@ -203,6 +208,9 @@ export const usePluginRunStore = defineStore("pluginRun", {
     delete(id_list) {
       id_list.forEach((id) => {
           let index = this.pluginRunList.findIndex((item) => item === id);
+          if (index < 0) {
+            return;
+          }
           this.pluginRunList.splice(index, 1);
           delete this.pluginRuns[id];
         }

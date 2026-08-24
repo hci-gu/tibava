@@ -122,11 +122,12 @@ export default {
       const pluginRunResultStore = usePluginRunResultStore();
 
       const timeline = timelineStore.get(this.timeline);
+      if (!timeline || !timeline.plugin_run_result_id) {
+        return;
+      }
       const result = pluginRunResultStore.get(timeline.plugin_run_result_id);
 
-      console.log(timeline);
-      console.log(result);
-      if (result.type === "SCALAR") {
+      if (result && result.type === "SCALAR" && result.data) {
         var csv = "time,data\n";
         for (let i = 0; i < result.data.time.length; i++) {
           // Runs 5 times, with values of step 0 through 4.

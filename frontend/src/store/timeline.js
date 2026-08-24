@@ -56,6 +56,7 @@ export const useTimelineStore = defineStore("timeline", {
       return (videoId) => {
         return state.timelineList
           .map((id) => state.timelines[id])
+          .filter(Boolean)
           .filter((e) => e.video_id === videoId);
       };
     },
@@ -84,6 +85,9 @@ export const useTimelineStore = defineStore("timeline", {
     },
     getLatest(state) {
       return () => {
+        if (!state.timelineListAdded.length) {
+          return null;
+        }
         const id = state.timelineListAdded.at(-1)[1];
         return state.timelines[id];
       }
@@ -124,15 +128,16 @@ export const useTimelineStore = defineStore("timeline", {
     },
 
     selected(state) {
-      return state.timelineListSelected.map((id) => state.timelines[id]);
+      return state.timelineListSelected
+        .map((id) => state.timelines[id])
+        .filter(Boolean);
     },
     lastSelected(state) {
       if (state.timelineListSelected.length <= 0) {
         return null;
       }
-      return state.timelineListSelected.map((id) => state.timelines[id])[
-        state.timelineListSelected.length - 1
-      ];
+      const selected = this.selected;
+      return selected.length ? selected[selected.length - 1] : null;
     },
     getPrevious(state) {
       return (id) => {
@@ -140,6 +145,9 @@ export const useTimelineStore = defineStore("timeline", {
           return this.all.sort((a, b) => a.order - b.order)[0];
         }
         const timeline = state.timelines[id];
+        if (!timeline) {
+          return null;
+        }
         const timelines = this.all
           .sort((a, b) => a.order - b.order)
           .filter((e) => e.order < timeline.order);
@@ -155,6 +163,9 @@ export const useTimelineStore = defineStore("timeline", {
           return this.all.sort((a, b) => a.order - b.order)[0];
         }
         const timeline = state.timelines[id];
+        if (!timeline) {
+          return null;
+        }
         const timelines = this.all
           .sort((a, b) => a.order - b.order)
           .filter((e) => e.order > timeline.order);
@@ -193,7 +204,9 @@ export const useTimelineStore = defineStore("timeline", {
       let segment_index = this.timelineListSelected.findIndex(
         (f) => f === timelineId
       );
-      this.timelineListSelected.splice(segment_index, 1);
+      if (segment_index >= 0) {
+        this.timelineListSelected.splice(segment_index, 1);
+      }
 
       // if (timelineSegmentId in this.timelineSegments) {
       //     this.timelineSegments[timelineSegmentId].selected = false;
@@ -210,15 +223,16 @@ export const useTimelineStore = defineStore("timeline", {
         .get(`${config.API_LOCATION}/timeline/list_all`, { params })
         .then((res) => {
           if (res.data.status === "ok") {
-            this.updateStore(res.data.entries);
+            const pluginRunResultStore = usePluginRunResultStore();
+            this.updateStore(res.data.entries.map((timeline) => this.withPluginResult(timeline, pluginRunResultStore)));
           }
         })
         .finally(() => {
           this.isLoading = false;
         });
     },
-    async fetchForVideo({ videoId = null, clear = true }) {
-      if (this.isLoading) {
+    async fetchForVideo({ videoId = null, clear = true, force = false }) {
+      if (this.isLoading && !force) {
         return;
       }
       this.isLoading = true;
@@ -241,17 +255,8 @@ export const useTimelineStore = defineStore("timeline", {
         .get(`${config.API_LOCATION}/timeline/list`, { params })
         .then((res) => {
           if (res.data.status === "ok") {
-            this.updateStore(res.data.entries);
-            // load plugin_run_results into timeline objects
             const pluginRunResultStore = usePluginRunResultStore();
-            res.data.entries.forEach((timeline) => {
-              if (!('plugin' in timeline) && timeline.type == "PLUGIN_RESULT" && "plugin_run_result_id" in timeline) {
-                const result = pluginRunResultStore.get(timeline.plugin_run_result_id);
-                if (result) {
-                  timeline.plugin = { data: result.data, type: result.type };
-                }
-              }
-            });
+            this.updateStore(res.data.entries.map((timeline) => this.withPluginResult(timeline, pluginRunResultStore)));
           }
         })
         .finally(() => {
@@ -549,6 +554,18 @@ export const useTimelineStore = defineStore("timeline", {
         this.timelineListChanged.push([Date.now(), id]);
       });
     },
+    withPluginResult(timeline, pluginRunResultStore) {
+      if (!('plugin' in timeline) && timeline.type == "PLUGIN_RESULT" && "plugin_run_result_id" in timeline) {
+        const result = pluginRunResultStore.get(timeline.plugin_run_result_id);
+        if (result) {
+          return {
+            ...timeline,
+            plugin: { data: result.data, type: result.type },
+          };
+        }
+      }
+      return timeline;
+    },
     clearStore() {
       this.timelineListSelected = [];
       this.timelineListAdded = [];
@@ -561,8 +578,12 @@ export const useTimelineStore = defineStore("timeline", {
     },
     deleteFromStore(ids) {
       ids.forEach((id) => {
-        this.timelineListDeleted.push([Date.now(), id]);
         let index = this.timelineList.findIndex((f) => f === id);
+        if (index < 0) {
+          return;
+        }
+
+        this.timelineListDeleted.push([Date.now(), id]);
         this.timelineList.splice(index, 1);
         Vue.delete(this.timelines, id);
       });
@@ -570,6 +591,13 @@ export const useTimelineStore = defineStore("timeline", {
     },
     addToStore(timelines) {
       timelines.forEach((e) => {
+        if (e.id in this.timelines) {
+          Vue.set(this.timelines, e.id, {
+            ...this.timelines[e.id],
+            ...e,
+          });
+          return;
+        }
         this.timelineListAdded.push([Date.now(), e.id]);
         Vue.set(this.timelines, e.id, e);
         this.timelineList.push(e.id);
@@ -579,6 +607,10 @@ export const useTimelineStore = defineStore("timeline", {
     updateStore(timelines) {
       timelines.forEach((e) => {
         if (e.id in this.timelines) {
+          Vue.set(this.timelines, e.id, {
+            ...this.timelines[e.id],
+            ...e,
+          });
           return;
         }
         this.timelineListAdded.push([Date.now(), e.id]);
@@ -599,6 +631,9 @@ export const useTimelineStore = defineStore("timeline", {
 
         while (parent_id != null) {
           let parent = that.get(parent_id);
+          if (!parent) {
+            return false;
+          }
           parent_id = parent.parent_id;
           if (parent.collapse) {
             return true;

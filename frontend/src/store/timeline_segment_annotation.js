@@ -53,7 +53,7 @@ export const useTimelineSegmentAnnotationStore = defineStore(
         ).filter(
           (segment) => segment.category && segment.category.name === "Transcript"
         ).sort(
-          (a, b) => a.start > b.start
+          (a, b) => a.start - b.start
         ).map(
           (segment, i) => {
             segment.id = i + 1;
@@ -136,8 +136,8 @@ export const useTimelineSegmentAnnotationStore = defineStore(
         //     commit('error/update', info, { root: true });
         // });
       },
-      async fetchForVideo({ videoId, clear = true }) {
-        if (this.isLoading) {
+      async fetchForVideo({ videoId, clear = true, force = false }) {
+        if (this.isLoading && !force) {
           return;
         }
         this.isLoading = true;
@@ -190,6 +190,10 @@ export const useTimelineSegmentAnnotationStore = defineStore(
       updateStore(timelineSegmentAnnotations) {
         timelineSegmentAnnotations.forEach((e) => {
           if (e.id in this.timelineSegmentAnnotations) {
+            Vue.set(this.timelineSegmentAnnotations, e.id, {
+              ...this.timelineSegmentAnnotations[e.id],
+              ...e,
+            });
             return;
           }
           Vue.set(this.timelineSegmentAnnotations, e.id, e);

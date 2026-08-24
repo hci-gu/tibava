@@ -55,7 +55,7 @@ class PluginRunResultList(View):
             # for x in analyses:
             #     print(f"\t {x.id.hex}")
 
-            add_results = request.GET.get("add_results", True)
+            add_results = request.GET.get("add_results", "true").lower() == "true"
             if add_results:
                 # print("A", flush=True)
 
@@ -72,7 +72,7 @@ class PluginRunResultList(View):
                                 entries.append(json.load(f))
                                 cached = True
                     except Exception:
-                        logger.exception(f"Cache couldn't read {e}")
+                        logger.exception("Cache couldn't read")
                     if cached:
                         continue
                     # print(f"x {x}")
@@ -88,7 +88,7 @@ class PluginRunResultList(View):
                             with open(cache_path, "w") as f:
                                 json.dump(result_dict, f)
                         except Exception:
-                            logger.exception(f"Cache couldn't write {e}")
+                            logger.exception("Cache couldn't write")
 
                         entries.append(result_dict)
 

@@ -1,3 +1,4 @@
+import Vue from 'vue';
 import axios from '../plugins/axios';
 import config from '../../app.config';
 import { defineStore } from 'pinia';
@@ -28,8 +29,8 @@ export const usePluginRunResultStore = defineStore('pluginRunResult', {
         },
     },
     actions: {
-        async fetchForVideo({ addResults = false, videoId = null, pluginRunId = null }) {
-            if (this.isLoading) {
+        async fetchForVideo({ addResults = false, videoId = null, pluginRunId = null, force = false }) {
+            if (this.isLoading && !force) {
                 return
             }
             this.isLoading = true
@@ -75,10 +76,13 @@ export const usePluginRunResultStore = defineStore('pluginRunResult', {
         deleteForPluginRuns(id_list) {
             id_list.forEach((id) => {
                 let results = this.forPluginRun(id);
-                results.forEach((result_id) => {
+                results.forEach((result) => {
+                    const result_id = result.id;
                     let index = this.pluginRunResultList.findIndex((item) => item === result_id);
-                    this.pluginRunResultList.splice(index, 1);
-                    delete this.pluginRunResults[id];
+                    if (index >= 0) {
+                        this.pluginRunResultList.splice(index, 1);
+                    }
+                    Vue.delete(this.pluginRunResults, result_id);
                 })
               }
             )
@@ -86,11 +90,14 @@ export const usePluginRunResultStore = defineStore('pluginRunResult', {
         updateAll(pluginRunResults) {
             pluginRunResults.forEach((e) => {
                 if (e.id in this.pluginRunResults) {
-                    return;
+                    Vue.set(this.pluginRunResults, e.id, {
+                        ...this.pluginRunResults[e.id],
+                        ...e,
+                    });
+                } else {
+                    Vue.set(this.pluginRunResults, e.id, e);
+                    this.pluginRunResultList.push(e.id);
                 }
-                // console.log(e.id)
-                this.pluginRunResults[e.id] = e;
-                this.pluginRunResultList.push(e.id);
             });
         },
     },

@@ -4,7 +4,14 @@ import uuid
 from typing import Dict, List
 
 
-from backend.models import PluginRun, PluginRunResult, Video, Timeline, TimelineSegment
+from backend.models import (
+    PluginRun,
+    PluginRunResult,
+    Video,
+    VideoAnalysisState,
+    Timeline,
+    TimelineSegment,
+)
 from django.conf import settings
 from backend.plugin_manager import PluginManager
 
@@ -69,11 +76,19 @@ class ShotDetection(Task):
 
         with transaction.atomic():
             with result[1]["shots"] as d:
+                plugin_run_result_db = PluginRunResult.objects.create(
+                    plugin_run=plugin_run,
+                    data_id=d.id,
+                    name="shots",
+                    type=PluginRunResult.TYPE_SHOTS,
+                )
+
                 # TODO translate the name
                 timeline = Timeline.objects.create(
                     video=video,
                     name=parameters.get("timeline"),
                     type=Timeline.TYPE_ANNOTATION,
+                    plugin_run_result=plugin_run_result_db,
                 )
                 for shot in d.shots:
                     segment_id = uuid.uuid4().hex
@@ -84,12 +99,11 @@ class ShotDetection(Task):
                         end=shot.end,
                     )
 
-                plugin_run_result_db = PluginRunResult.objects.create(
-                    plugin_run=plugin_run,
-                    data_id=d.id,
-                    name="shots",
-                    type=PluginRunResult.TYPE_SHOTS,
+                video_analysis_state_db, _ = VideoAnalysisState.objects.get_or_create(
+                    video=video
                 )
+                video_analysis_state_db.selected_shots = timeline
+                video_analysis_state_db.save()
 
                 return {
                     "plugin_run": plugin_run.id.hex,

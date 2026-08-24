@@ -5,7 +5,7 @@
   <v-virtual-scroll v-else :class="['d-flex', 'flex-column', 'pa-2', 'ma-4']" ref="parentContainer" :items="clusters"
     item-height="140" :bench="clustersLength">
     <template v-slot:default="{ item }">
-      <cluster-item-card :type_name="name" :cluster="item" :allClusters="clusters" :key="item.systemId" :ref="`childContainer-${item.systemId}`"></cluster-item-card>
+      <cluster-item-card :type_name="name" :cluster="item" :allClusters="clusters" :key="item.id"></cluster-item-card>
     </template>
   </v-virtual-scroll>
 </template>

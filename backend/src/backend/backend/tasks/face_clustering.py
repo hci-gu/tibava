@@ -10,6 +10,7 @@ from backend.models import (
     PluginRun,
     PluginRunResult,
     Video,
+    VideoAnalysisState,
     TibavaUser,
 )
 
@@ -242,6 +243,7 @@ class FaceClustering(Task):
                         cluster_id=cluster.id,
                         name=f"Cluster {cluster_index+1}",
                         plugin_run=plugin_run,
+                        type=ClusterTimelineItem.TYPE_FACE,
                     )
 
                     # create a face db item for every detected face
@@ -269,6 +271,12 @@ class FaceClustering(Task):
                             delta_time=image.delta_time,
                             is_sample=embedding_id in cluster.sample_embedding_ids,
                         )
+
+                video_analysis_state_db, _ = VideoAnalysisState.objects.get_or_create(
+                    video=video
+                )
+                video_analysis_state_db.selected_face_clustering = plugin_run
+                video_analysis_state_db.save()
 
                 return {
                     "plugin_run": plugin_run.id.hex,

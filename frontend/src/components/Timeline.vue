@@ -441,10 +441,28 @@ export default {
         parentId: node.parent.id,
       });
     },
+    latestTimelineTimestamp() {
+      const timestamps = [
+        ...this.timelinesAdded.map((data) => data[0]),
+        ...this.timelinesDeleted.map((data) => data[0]),
+        ...this.timelinesChanged.map((data) => data[0]),
+      ];
+      return timestamps.length ? Math.max(...timestamps) : 0;
+    },
+    markTimelineQueueDrawn() {
+      this.lastTimestamp = Math.max(
+        this.lastTimestamp,
+        this.latestTimelineTimestamp()
+      );
+    },
     draw() {
+      if (!this.app) {
+        return;
+      }
       this.drawTimelines();
       this.drawScale();
       this.drawTimeBar();
+      this.markTimelineQueueDrawn();
     },
     drawTimeBar() {
       if (this.timeBarsContainer) {
@@ -500,11 +518,8 @@ export default {
       this.app.stage.addChild(this.timeScalesContainer);
     },
     drawTimelines() {
-      if (this.timelinesContainer) {
-        this.app.stage.removeChild(this.timelinesContainer);
-      }
-      this.timelinesContainer = new PIXI.Container();
-      this.timelineObjects = [];
+      const nextTimelinesContainer = new PIXI.Container();
+      const nextTimelineObjects = [];
 
       this.timelines.forEach((e, i) => {
         const x = this.timeToX(this.startTime);
@@ -518,22 +533,31 @@ export default {
         if (timeline) {
           timeline.x = x;
           timeline.y = y;
-          this.timelinesContainer.addChild(timeline);
-          this.timelineObjects.push(timeline);
+          nextTimelinesContainer.addChild(timeline);
+          nextTimelineObjects.push(timeline);
         }
       });
 
+      if (this.timelinesContainer) {
+        this.app.stage.removeChild(this.timelinesContainer);
+      }
+      this.timelinesContainer = nextTimelinesContainer;
+      this.timelineObjects = nextTimelineObjects;
       this.app.stage.addChild(this.timelinesContainer);
     },
     drawTimeline(timeline) {
-      const width = this.timeToX(this.endTime) - this.timeToX(this.startTime);
-      const height = this.timelineHeight;
-      if (timeline.type == "ANNOTATION" || timeline.type == "TRANSCRIPT") {
-        return this.drawAnnotationTimeline(timeline, width, height);
-      } else if (timeline.type == "PLUGIN_RESULT") {
-        return this.drawGraphicTimeline(timeline, width, height);
-      } else {
-        console.error(`Unknown timeline type ${timeline.type}`);
+      try {
+        const width = this.timeToX(this.endTime) - this.timeToX(this.startTime);
+        const height = this.timelineHeight;
+        if (timeline.type == "ANNOTATION" || timeline.type == "TRANSCRIPT") {
+          return this.drawAnnotationTimeline(timeline, width, height);
+        } else if (timeline.type == "PLUGIN_RESULT") {
+          return this.drawGraphicTimeline(timeline, width, height);
+        } else {
+          console.error(`Unknown timeline type ${timeline.type}`);
+        }
+      } catch (error) {
+        console.error(`Failed to draw timeline ${timeline.id}`, error);
       }
       return null;
     },
@@ -584,7 +608,11 @@ export default {
       drawnTimeline.on("rightdown", (ev) => {
         const point = this.mapToGlobal(ev.data.global);
         const x = ev.data.getLocalPosition(drawnTimeline).x;
-        const segment = drawnTimeline.getSegmentOnPosition(x).segment;
+        const hit = drawnTimeline.getSegmentOnPosition(x);
+        if (hit === null) {
+          return;
+        }
+        const segment = hit.segment;
 
         this.segmentMenu.show = true;
         this.segmentMenu.x = point.x;
@@ -714,11 +742,10 @@ export default {
       if ("plugin_run_result_id" in timeline) {
         const result = pluginRunResultStore.get(timeline.plugin_run_result_id);
 
-        if (result === undefined) {
+        if (result === undefined || result.data === undefined) {
           return null;
-        } else {
-          timeline.plugin = { data: result.data, type: result.type };
         }
+        timeline.plugin = { data: result.data, type: result.type };
         if (timeline.visualization == "COLOR") {
           drawnTimeline = new ColorTimeline({
             timelineId: timeline.id,
@@ -972,12 +999,15 @@ export default {
     isLoading(newValue) {
       if (newValue === false) {
         this.enabled = true;
+        this.$nextTick(() => {
+          this.draw();
+        });
       }
     },
     timelines(values) {
       function findChildren(elem, parent) {
         let hierarchy = [];
-        elem.sort((a,b) => a.order > b.order).forEach((e) => {
+        elem.slice().sort((a, b) => a.order - b.order).forEach((e) => {
           if (e.parent_id == parent) {
             let children = findChildren(elem, e.id);
             hierarchy.push({
@@ -992,6 +1022,11 @@ export default {
         return hierarchy;
       }
       this.timelineHierarchy = findChildren(values, null);
+      if (this.enabled) {
+        this.$nextTick(() => {
+          this.draw();
+        });
+      }
     },
     selectedTimelineSegments(newSelection, oldSelection) {
       this.removeSegmentSelection(oldSelection);
@@ -1088,16 +1123,16 @@ export default {
         }
         const timelineObject = this.getTimeline(timeline.id);
 
+        const newTimelineObject = this.drawTimeline(timeline);
+        if (!newTimelineObject) {
+          return;
+        }
         if (timelineObject) {
           this.timelinesContainer.removeChild(timelineObject);
           const index = this.timelineObjects.indexOf(timelineObject);
           if (index > -1) {
             this.timelineObjects.splice(index, 1);
           }
-        }
-        const newTimelineObject = this.drawTimeline(timeline);
-        if (!newTimelineObject) {
-          return;
         }
         this.timelinesContainer.addChild(newTimelineObject);
         this.timelineObjects.push(newTimelineObject);
@@ -1115,6 +1150,7 @@ export default {
       // update order and visible of all objects
       let skipped = 0;
       this.timelines
+        .slice()
         .sort((a, b) => a.order - b.order)
         .forEach((timeline, i) => {
           const timelineObject = this.getTimeline(timeline.id);
@@ -1181,7 +1217,10 @@ export default {
         }
       });
     });
-    // this.draw();
+    if (!this.isLoading) {
+      this.enabled = true;
+      this.draw();
+    }
   },
   components: {
     ModalRenameTimeline,

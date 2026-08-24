@@ -105,6 +105,10 @@ export const useAnnotationCategoryStore = defineStore('annotationCategory', {
         updateStore(annotationCategories) {
             annotationCategories.forEach((e) => {
                 if (e.id in this.annotationCategories) {
+                    Vue.set(this.annotationCategories, e.id, {
+                        ...this.annotationCategories[e.id],
+                        ...e,
+                    });
                     return;
                 }
                 Vue.set(this.annotationCategories, e.id, e);

@@ -77,7 +77,7 @@ export default {
       const timelines = this.timelineStore.all
         .filter((timeline) => timeline.type === "PLUGIN_RESULT" && (this.timelineId === undefined || this.timelineId === timeline.id))
         .map((timeline) => ({ timeline: timeline, result: this.pluginRunResultStore.get(timeline.plugin_run_result_id) }))
-        .filter((tr) => tr.result && tr.result.type == "SCALAR");
+        .filter((tr) => tr.result && tr.result.type == "SCALAR" && tr.result.data);
 
       return timelines.map((tr) => ({
           x: tr.result.data.time,

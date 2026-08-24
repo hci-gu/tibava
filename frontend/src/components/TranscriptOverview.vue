@@ -44,9 +44,10 @@ export default {
   methods: {
     scrollToHighlightedChild(childID) {
       const parentContainer = this.$refs.parentContainer;
-      const childContainer = this.$refs[`childContainer-${childID}`];
+      const childRef = this.$refs[`childContainer-${childID}`];
+      const childContainer = Array.isArray(childRef) ? childRef[0] : childRef;
 
-      if (parentContainer && childContainer) {
+      if (parentContainer && childContainer && childContainer.$el && childContainer.$el.parentElement) {
         const offset = (parentContainer.$el.offsetHeight - childContainer.$el.offsetHeight) / 2;
         parentContainer.$el.scroll(0, childContainer.$el.parentElement.offsetTop - offset);
       }

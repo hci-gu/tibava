@@ -97,12 +97,42 @@ export default {
       }
       return Object.values(timelinesGroups)
         .filter((t) => t.ids.video_ids.length == this.videoIds.length);
+    },
+    isShotTimeline(timeline) {
+      if (!timeline || timeline.type !== "ANNOTATION") {
+        return false;
+      }
+
+      if (timeline.plugin_run_result_id) {
+        const result = this.pluginRunResultStore.get(timeline.plugin_run_result_id);
+        if (result && result.type === "SHOTS") {
+          return true;
+        }
+      }
+
+      return timeline.name && timeline.name.toLowerCase() === "shots";
+    },
+    isScalarTimeline(timeline) {
+      if (!timeline || timeline.type !== "PLUGIN_RESULT") {
+        return false;
+      }
+
+      if (timeline.plugin && timeline.plugin.type === "SCALAR") {
+        return true;
+      }
+
+      if (timeline.plugin_run_result_id) {
+        const result = this.pluginRunResultStore.get(timeline.plugin_run_result_id);
+        return Boolean(result && result.type === "SCALAR");
+      }
+
+      return false;
     }
   },
   computed: {
     shot_timelines() {
       let timelines = this.timelineStore.all.filter(
-        (timeline) => timeline.type == "ANNOTATION" && this.videoIds.indexOf(timeline.video_id) >= 0
+        (timeline) => this.isShotTimeline(timeline) && this.videoIds.indexOf(timeline.video_id) >= 0
       );
       return this.groupTimelines(timelines);
     },
@@ -113,7 +143,7 @@ export default {
       //   console.log(element.plugin)
       // });
       let timelines = this.timelineStore.all
-        .filter((t) => t.type === "PLUGIN_RESULT" && t.plugin && t.plugin.type == 'SCALAR' && this.videoIds.indexOf(t.video_id) >= 0)
+        .filter((t) => this.isScalarTimeline(t) && this.videoIds.indexOf(t.video_id) >= 0)
       timelines = this.groupTimelines(timelines);
 
       return timelines;

@@ -120,6 +120,7 @@
 import { mapStores } from "pinia";
 import { useTimelineStore } from "@/store/timeline";
 import { useShotStore } from "@/store/shot";
+import { usePluginRunResultStore } from "@/store/plugin_run_result";
 import { useClusterTimelineItemStore } from "../store/cluster_timeline_item";
 import { Network } from "vis-network";
 import { DataSet } from "vis-data";
@@ -234,9 +235,14 @@ export default {
         .filter(t => t.active && t.visible)
         .map((tSetting) => {
           const timeline = this.timelines.find(i => i.id == tSetting.id);
-          tSetting.timestamps = timeline.plugin.data.time.filter((time, index) => timeline.plugin.data.y[index] >= tSetting.threshold);
+          const result = this.scalarTimelineResult(timeline);
+          if (!result || !result.data) {
+            return null;
+          }
+          tSetting.timestamps = result.data.time.filter((time, index) => result.data.y[index] >= tSetting.threshold);
           return tSetting;
-        });
+        })
+        .filter(Boolean);
       const clusterTimelines = Object.values(this.clusterSettings)
         .filter(c => c.active)
         .map(c => {
@@ -293,13 +299,23 @@ export default {
       const g = Math.round(gA + (gB - gA) * 0.5).toString(16).padStart(2, '0');
       const b = Math.round(bA + (bB - bA) * 0.5).toString(16).padStart(2, '0');
       return '#' + r + g + b;
-    }
+    },
+    scalarTimelineResult(timeline) {
+      if (!timeline || timeline.type !== "PLUGIN_RESULT" || !timeline.plugin_run_result_id) {
+        return null;
+      }
+      const result = this.pluginRunResultStore.get(timeline.plugin_run_result_id);
+      if (result && result.type === "SCALAR" && result.data) {
+        return result;
+      }
+      return null;
+    },
   },
   computed: {
     timelines() {
       return this.timelineStore
         .all
-        .filter((timeline) => timeline.type === "PLUGIN_RESULT" && timeline.plugin && timeline.plugin.type === 'SCALAR');
+        .filter((timeline) => this.scalarTimelineResult(timeline));
     },
     visibleTimelines() {
       return Object.values(this.timelineSettings).filter((t) => t.visible);
@@ -310,7 +326,7 @@ export default {
     latestPlaceClustering() {
       return this.clusterTimelineItemStore.latestPlaceClustering();
     },
-    ...mapStores(useTimelineStore, useShotStore, useClusterTimelineItemStore),
+    ...mapStores(useTimelineStore, useShotStore, usePluginRunResultStore, useClusterTimelineItemStore),
   },
   watch: {
     timelines() {

@@ -25,12 +25,15 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
   },
   getters: {
     all(state) {
-      return state.timelineSegmentList.map((id) => state.timelineSegments[id]);
+      return state.timelineSegmentList
+        .map((id) => state.timelineSegments[id])
+        .filter(Boolean);
     },
     forTimeline(state) {
       return (timeline_id) => {
         return state.timelineSegmentList
           .map((id) => state.timelineSegments[id])
+          .filter(Boolean)
           .filter((e) => e.timeline_id === timeline_id)
           .sort((a, b) => a.start - b.start);
       };
@@ -40,6 +43,7 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
         console.log(`${timeline_id}, ${start}, ${end}`);
         return state.timelineSegmentList
           .map((id) => state.timelineSegments[id])
+          .filter(Boolean)
           .filter((e) => e.timeline_id === timeline_id)
           .filter((e) => Math.min(e.end, end) - Math.max(e.start, start) > 0)
           .sort((a, b) => a.start - b.start);
@@ -49,6 +53,7 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
       return (current_time) => {
         return state.timelineSegmentList
           .map((id) => state.timelineSegments[id])
+          .filter(Boolean)
           .filter((e) => e.start <= current_time && e.end >= current_time);
       };
     },
@@ -58,17 +63,16 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
       };
     },
     selected(state) {
-      return state.timelineSegmentListSelected.map(
-        (id) => state.timelineSegments[id]
-      );
+      return state.timelineSegmentListSelected
+        .map((id) => state.timelineSegments[id])
+        .filter(Boolean);
     },
     lastSelected(state) {
       if (state.timelineSegmentListSelected.length <= 0) {
         return null;
       }
-      return state.timelineSegmentListSelected.map(
-        (id) => state.timelineSegments[id]
-      )[state.timelineSegmentListSelected.length - 1];
+      const selected = this.selected;
+      return selected.length ? selected[selected.length - 1] : null;
     },
     forTimeLUT(state) {
       return (time) => {
@@ -84,6 +88,9 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
     },
     getPreviousOnTimeline(state) {
       return (id) => {
+        if (!(id in state.timelineSegments)) {
+          return null;
+        }
         const startTime = state.timelineSegments[id].start;
         const timelineId = state.timelineSegments[id].timeline_id;
         const segments = this.forTimeline(timelineId)
@@ -97,6 +104,9 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
     },
     getNextOnTimeline(state) {
       return (id) => {
+        if (!(id in state.timelineSegments)) {
+          return null;
+        }
         const endTime = state.timelineSegments[id].end;
         const timelineId = state.timelineSegments[id].timeline_id;
         const segments = this.forTimeline(timelineId)
@@ -126,7 +136,9 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
       let segment_index = this.timelineSegmentListSelected.findIndex(
         (f) => f === timelineSegmentId
       );
-      this.timelineSegmentListSelected.splice(segment_index, 1);
+      if (segment_index >= 0) {
+        this.timelineSegmentListSelected.splice(segment_index, 1);
+      }
 
       // if (timelineSegmentId in this.timelineSegments) {
       //     this.timelineSegments[timelineSegmentId].selected = false;
@@ -393,8 +405,8 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
       //     commit('error/update', info, { root: true });
       // });
     },
-    async fetchForVideo({ timelineId, videoId, clear = true }) {
-      if (this.isLoading) {
+    async fetchForVideo({ timelineId, videoId, clear = true, force = false }) {
+      if (this.isLoading && !force) {
         return;
       }
       this.isLoading = true;
@@ -460,8 +472,15 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
     },
     addToStore(timelineSegments) {
       timelineSegments.forEach((e) => {
+        if (e.id in this.timelineSegments) {
+          Vue.set(this.timelineSegments, e.id, {
+            ...this.timelineSegments[e.id],
+            ...e,
+          });
+          return;
+        }
         this.timelineSegmentListAdded.push(e.id);
-        this.timelineSegments[e.id] = e;
+        Vue.set(this.timelineSegments, e.id, e);
         this.timelineSegmentList.push(e.id);
       });
       timelineSegments = timelineSegments.sort((a, b) => {
@@ -471,12 +490,18 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
     },
     deleteFromStore(ids) {
       ids.forEach((id) => {
-        this.timelineSegmentListDeleted.push(id);
         // delete from selected
         let index = this.timelineSegmentListSelected.findIndex((f) => f === id);
-        this.timelineSegmentListSelected.splice(index, 1);
+        if (index >= 0) {
+          this.timelineSegmentListSelected.splice(index, 1);
+        }
         // delete from store
         index = this.timelineSegmentList.findIndex((f) => f === id);
+        if (index < 0) {
+          return;
+        }
+
+        this.timelineSegmentListDeleted.push(id);
         this.timelineSegmentList.splice(index, 1);
 
         delete this.timelineSegments[id];
@@ -489,10 +514,14 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
       });
       timelineSegments.forEach((e) => {
         if (e.id in this.timelineSegments) {
+          Vue.set(this.timelineSegments, e.id, {
+            ...this.timelineSegments[e.id],
+            ...e,
+          });
           return;
         }
         this.timelineSegmentListAdded.push(e.id);
-        this.timelineSegments[e.id] = e;
+        Vue.set(this.timelineSegments, e.id, e);
         this.timelineSegmentList.push(e.id);
       });
       this.updateTimeStore();
@@ -505,6 +534,9 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
         let segment_index = this.timelineSegmentList.findIndex(
           (f) => f === e.id
         );
+        if (segment_index < 0) {
+          return;
+        }
         this.timelineSegmentList.splice(segment_index, 1);
         Vue.delete(this.timelineSegments, e.id);
       });
@@ -512,6 +544,7 @@ export const useTimelineSegmentStore = defineStore("timelineSegment", {
     },
 
     updateTimeStore() {
+      this.timelineSegmentByTime = {};
       this.all.forEach((e) => {
         for (var i = Math.floor(e.start); i < Math.ceil(e.end); i++) {
           if (i in this.timelineSegmentByTime) {

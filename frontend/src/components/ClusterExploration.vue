@@ -219,10 +219,12 @@ export default {
       this.show = false;
     },
     generateItems() {
-      this.items = this.shotStore.shots.map((shot, i) => {
-        const images = this.cluster.items.filter((i) => Math.round(shot.start) <= Math.round(i.time) && Math.round(i.time) < Math.round(shot.end)).map((i) => i.image_path);
+      this.items = this.shotStore.shots.map((shot, index) => {
+        const images = this.cluster.items
+          .filter((clusterItem) => Math.round(shot.start) <= Math.round(clusterItem.time) && Math.round(clusterItem.time) < Math.round(shot.end))
+          .map((clusterItem) => clusterItem.image_path);
         return {
-          name: "Shot " + i,
+          name: "Shot " + index,
           images: images,
           start: shot.start,
           end: shot.end,
@@ -237,7 +239,7 @@ export default {
   },
   computed: {
     allImagesMarked() {
-      return this.markedForDeletion.length === this.items.length;
+      return this.cluster.items.length > 0 && this.markedForDeletion.length === this.cluster.items.length;
     },
     imagesSelectedForDeletion() {
       return this.markedForDeletion.length > 0;

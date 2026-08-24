@@ -93,6 +93,9 @@ export default {
   computed: {
     timeline_type() {
       const timeline = this.timelineStore.get(this.timeline);
+      if (!timeline) {
+        return null;
+      }
 
       if (
         timeline.type == "PLUGIN_RESULT" &&
@@ -105,7 +108,7 @@ export default {
           timeline.plugin = { data: result.data, type: result.type };
         }
       }
-      return timeline.plugin.type;
+      return timeline.plugin ? timeline.plugin.type : null;
     },
     visualization: {
       get() {

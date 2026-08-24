@@ -67,8 +67,10 @@ export const useClusterTimelineItemStore = defineStore("clusterTimelineItem", {
                 if (!place_clustering.length) {
                     return [];
                 }
+                const selectedPlaceClustering =
+                    state.selectedPlaceClustering || place_clustering[0].id;
                 return Object.values(state.clusterTimelineItems)
-                    .filter((cti) => cti.plugin_run === state.selectedPlaceClustering)
+                    .filter((cti) => cti.plugin_run === selectedPlaceClustering)
                     .sort((a, b) => b.items.length - a.items.length);
             }
         },
@@ -87,8 +89,10 @@ export const useClusterTimelineItemStore = defineStore("clusterTimelineItem", {
                 if (!face_clustering.length) {
                     return [];
                 }
+                const selectedFaceClustering =
+                    state.selectedFaceClustering || face_clustering[0].id;
                 return Object.values(state.clusterTimelineItems)
-                    .filter((cti) => cti.plugin_run === state.selectedFaceClustering)
+                    .filter((cti) => cti.plugin_run === selectedFaceClustering)
                     .sort((a, b) => b.items.length - a.items.length);
             }
         },

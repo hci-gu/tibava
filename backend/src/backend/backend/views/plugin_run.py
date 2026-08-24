@@ -189,7 +189,7 @@ class PluginRunList(View):
             else:
                 analyses = PluginRun.objects.filter(video__owner=request.user)
             # print(len(analyses), flush=True)
-            add_results = request.GET.get("add_results")
+            add_results = request.GET.get("add_results", "false").lower() == "true"
 
             analyses = analyses.prefetch_related("video")
 
