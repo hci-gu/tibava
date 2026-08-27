@@ -1,4 +1,5 @@
 import json
+import io
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,20 +16,25 @@ from backend.models import (
     PluginRun,
     PluginRunResult,
     Timeline,
+    TimelineSegment,
     Video,
+    VideoAnalysisState,
     VideoBatch,
     VideoBatchItem,
     VideoBatchPluginRun,
 )
+from backend.plugin_manager import PluginManager
 from backend.tasks.batch import (
     get_completed_step_outputs,
     ingest_video_batch,
+    resolve_step_parameters,
     run_video_batch_plugin_step,
     run_video_batch_preset,
 )
 from backend.utils import media_url_to_video
-from backend.utils.task import Task
+from backend.utils.task import PluginRunFailed, Task
 from backend.utils.batch_upload import extract_zip_videos, normalize_zip_member_name
+from backend.utils.batch_plugin_catalog import list_batch_plugin_catalog
 from backend.utils.upload import check_extension, download_file, get_file_extension
 from backend.utils.parser import Parser
 from backend.utils.plugin_presets import (
@@ -38,18 +44,24 @@ from backend.utils.plugin_presets import (
     list_batch_presets,
     resolve_dependency,
     validate_batch_preset,
+    validate_batch_preset_definition,
 )
 from backend.utils.video_ingest import ingest_video_file
 from backend.views.video import VideoUpload
 from backend.views.video_batch import (
     VideoBatchCancel,
     VideoBatchDelete,
+    VideoBatchExportElan,
     VideoBatchGet,
     VideoBatchList,
+    VideoBatchPluginCatalog,
     VideoBatchPresetList,
     VideoBatchRetryFailed,
     VideoBatchRetryFailedPluginSteps,
+    VideoBatchRunPluginSet,
     VideoBatchRunPreset,
+    VideoBatchSharedInputUpload,
+    VideoBatchValidatePluginSet,
     VideoBatchUpload,
 )
 
@@ -127,19 +139,20 @@ class BatchZipTests(SimpleTestCase):
             self.assertEqual(entries[0]["ingest_error"], "unsafe_zip_path")
             self.assertEqual(list(output_dir.glob("*")), [])
 
-    def test_extract_zip_videos_reports_unsupported_files(self):
+    def test_extract_zip_videos_ignores_unsupported_files(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             zip_path = Path(tmp_dir) / "batch.zip"
             output_dir = Path(tmp_dir) / "out"
             with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr(".DS_Store", b"metadata")
                 archive.writestr("notes/readme.txt", b"text")
+                archive.writestr("folder/video.mp4", b"video")
 
             entries = extract_zip_videos(zip_path, output_dir)
 
             self.assertEqual(len(entries), 1)
-            self.assertEqual(entries[0]["status"], "error")
-            self.assertEqual(entries[0]["original_path"], "notes/readme.txt")
-            self.assertEqual(entries[0]["ingest_error"], "wrong_file_extension")
+            self.assertEqual(entries[0]["status"], "ok")
+            self.assertEqual(entries[0]["original_path"], "folder/video.mp4")
 
     def test_extract_zip_videos_preserves_folder_paths_for_valid_videos(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -251,6 +264,61 @@ class BatchPresetTests(SimpleTestCase):
 
         self.assertIn(DEFAULT_BATCH_PRESET, preset_ids)
         self.assertNotIn("bad_dependency", preset_ids)
+
+    def test_supported_batch_catalog_defaults_validate_against_parsers(self):
+        for group in list_batch_plugin_catalog():
+            for plugin in group["children"]:
+                if not plugin["batch"]["supported"]:
+                    continue
+                parameters = [
+                    {"name": parameter["name"], "value": parameter.get("value")}
+                    for parameter in plugin["parameters"] + plugin["optional_parameters"]
+                    if parameter.get("value") is not None
+                    and not parameter["field"].startswith("select_")
+                ]
+                step = {"plugin": plugin["plugin"], "parameters": parameters}
+                for parameter in plugin["parameters"] + plugin["optional_parameters"]:
+                    if parameter["field"] == "select_timeline":
+                        step.setdefault("parameter_resolution", {})[
+                            parameter["name"]
+                        ] = {
+                            "strategy": "timeline_by_name",
+                            "name": "Shots",
+                            "required": True,
+                        }
+                    if parameter["field"] == "select_scalar_timeline":
+                        step.setdefault("parameter_resolution", {})[
+                            parameter["name"]
+                        ] = {
+                            "strategy": "scalar_timeline_by_name",
+                            "name": "Scalar",
+                            "required": True,
+                        }
+                    if parameter["field"] == "select_scalar_timelines":
+                        step.setdefault("parameter_resolution", {})[
+                            parameter["name"]
+                        ] = {
+                            "strategy": "scalar_timelines_by_name",
+                            "names": ["Scalar"],
+                            "required": True,
+                        }
+                    if parameter["field"] in {"image_input", "csv_input"}:
+                        step.setdefault("parameter_resolution", {})[
+                            parameter["name"]
+                        ] = {
+                            "strategy": "shared_file",
+                            "path": "/tmp/shared-input",
+                            "required": True,
+                        }
+
+                result = validate_batch_preset_definition(
+                    {
+                        "name": "Catalog smoke",
+                        "description": "",
+                        "steps": [step],
+                    }
+                )
+                self.assertEqual(result["status"], "ok", plugin["plugin"])
 
     def test_resolve_dependency_reads_nested_step_outputs(self):
         outputs = {"shotdetection": {"timelines": {"shots": "timeline-id"}}}
@@ -378,6 +446,7 @@ class VideoBatchViewTests(SimpleTestCase):
                 "files": [
                     SimpleUploadedFile("a.mp4", b"a"),
                     SimpleUploadedFile("b.mp4", b"b"),
+                    SimpleUploadedFile(".DS_Store", b"metadata"),
                 ],
             },
         )
@@ -505,7 +574,7 @@ class VideoBatchViewTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         run_preset.apply_async.assert_called_once_with(
-            (batch_id, "default_batch_analysis")
+            (batch_id, "default_batch_analysis", None, None)
         )
 
     def test_cancel_batch_marks_batch_cancelled(self):
@@ -584,6 +653,29 @@ class VideoBatchAPIDatabaseTests(TestCase):
         request.user = user or self.user
         return request
 
+    def create_ready_batch_item(self, batch, original_path, with_shots=True):
+        video = Video.objects.create(
+            owner=batch.owner,
+            name=Path(original_path).stem,
+            ext=Path(original_path).suffix,
+        )
+        item = VideoBatchItem.objects.create(
+            batch=batch,
+            video=video,
+            original_filename=Path(original_path).name,
+            original_path=original_path,
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        if with_shots:
+            shots = Timeline.objects.create(
+                video=video,
+                name="Shots",
+                type=Timeline.TYPE_ANNOTATION,
+            )
+            TimelineSegment.objects.create(timeline=shots, start=0, end=1)
+            VideoAnalysisState.objects.create(video=video, selected_shots=shots)
+        return item
+
     @override_settings(BATCH_UPLOAD_ROOT=tempfile.gettempdir())
     def test_multi_file_batch_upload_persists_paths_and_items(self):
         request = self.authenticated(
@@ -591,10 +683,11 @@ class VideoBatchAPIDatabaseTests(TestCase):
                 "/video/batch/upload",
                 {
                     "name": "Multi",
-                    "paths": json.dumps(["folder/a.mp4", "folder/sub/b.mp4"]),
+                    "paths": json.dumps(["folder/a.mp4", "folder/sub/b.mp4", ".DS_Store"]),
                     "files": [
                         SimpleUploadedFile("a.mp4", b"a"),
                         SimpleUploadedFile("b.mp4", b"b"),
+                        SimpleUploadedFile(".DS_Store", b"metadata"),
                     ],
                 },
             )
@@ -693,6 +786,107 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(detail_response.status_code, 500)
         self.assertEqual(json.loads(detail_response.content)["type"], "not_exist")
 
+    def test_batch_elan_export_preserves_folders_and_resolves_name_collisions(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Research batch")
+        self.create_ready_batch_item(batch, "group/session/clip.mp4")
+        self.create_ready_batch_item(batch, "group/session/clip.mov")
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/export-elan",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+        response = VideoBatchExportElan.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+        self.assertIn("research-batch-elan.zip", response["Content-Disposition"])
+        self.assertEqual(response["X-Exported-Count"], "2")
+        self.assertEqual(response["X-Failed-Count"], "0")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            self.assertEqual(
+                archive.namelist(),
+                [
+                    "group/session/clip.eaf",
+                    "group/session/clip (2).eaf",
+                ],
+            )
+            elan_files = [
+                archive.read("group/session/clip.eaf").decode("utf-8"),
+                archive.read("group/session/clip (2).eaf").decode("utf-8"),
+            ]
+            self.assertTrue(all("ANNOTATION_DOCUMENT" in elan for elan in elan_files))
+            self.assertTrue(any("clip.mp4" in elan for elan in elan_files))
+            self.assertTrue(any("clip.mov" in elan for elan in elan_files))
+
+    def test_batch_elan_export_includes_report_for_partial_failures(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Partial")
+        successful = self.create_ready_batch_item(batch, "ok/video.mp4")
+        failed = self.create_ready_batch_item(
+            batch, "missing/video.mp4", with_shots=False
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/export-elan",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+        response = VideoBatchExportElan.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Exported-Count"], "1")
+        self.assertEqual(response["X-Failed-Count"], "1")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            self.assertIn("ok/video.eaf", archive.namelist())
+            report = json.loads(archive.read("export-report.json"))
+        self.assertEqual(report["exported"][0]["item_id"], successful.id.hex)
+        self.assertEqual(
+            report["failed"],
+            [
+                {
+                    "item_id": failed.id.hex,
+                    "original_path": "missing/video.mp4",
+                    "reason": "missing_shot_timeline",
+                }
+            ],
+        )
+
+    def test_batch_elan_export_is_scoped_to_owner(self):
+        batch = VideoBatch.objects.create(owner=self.other_user, name="Private")
+        self.create_ready_batch_item(batch, "video.mp4")
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/export-elan",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+
+        response = VideoBatchExportElan.as_view()(request)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(json.loads(response.content)["type"], "not_exist")
+
+    def test_batch_elan_export_replaces_unsafe_archive_paths(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Unsafe path")
+        item = self.create_ready_batch_item(batch, "../video.mp4")
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/export-elan",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+
+        response = VideoBatchExportElan.as_view()(request)
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            self.assertEqual(archive.namelist(), [f"{item.video_id.hex}.eaf"])
+
     def test_preset_list_endpoint_returns_descriptions(self):
         response = VideoBatchPresetList.as_view()(
             self.authenticated(self.factory.get("/video/batch/presets"))
@@ -701,6 +895,56 @@ class VideoBatchAPIDatabaseTests(TestCase):
 
         self.assertTrue(entries)
         self.assertTrue(entries[0]["description"])
+
+    def test_plugin_catalog_endpoint_returns_supported_and_disabled_plugins(self):
+        response = VideoBatchPluginCatalog.as_view()(
+            self.authenticated(self.factory.get("/video/batch/plugin-catalog"))
+        )
+
+        data = json.loads(response.content)
+        plugins = {
+            plugin["plugin"]: plugin
+            for group in data["entries"]
+            for plugin in group["children"]
+        }
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(plugins["thumbnail"]["batch"]["supported"])
+        self.assertTrue(plugins["insightface_identification"]["batch"]["supported"])
+        self.assertEqual(
+            plugins["insightface_identification"]["batch"]["file_inputs"],
+            "shared",
+        )
+        self.assertTrue(plugins["clip_ontology"]["batch"]["supported"])
+        self.assertEqual(plugins["clip_ontology"]["parameters"][2]["name"], "concept_csv")
+
+    def test_shared_input_upload_returns_reusable_batch_path(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Shared input")
+
+        with tempfile.TemporaryDirectory() as tmp_dir, self.settings(BATCH_UPLOAD_ROOT=tmp_dir):
+            request = self.authenticated(
+                self.factory.post(
+                    "/video/batch/shared-input/upload",
+                    {
+                        "id": batch.id.hex,
+                        "file": SimpleUploadedFile(
+                            "ontology.csv",
+                            b"label,prompt\ncar,a car\n",
+                            content_type="text/csv",
+                        ),
+                    },
+                )
+            )
+            response = VideoBatchSharedInputUpload.as_view()(request)
+
+            data = json.loads(response.content)
+            output_path = Path(data["entry"]["path"])
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(data["status"], "ok")
+            self.assertEqual(data["entry"]["origin"], "ontology.csv")
+            self.assertTrue(output_path.exists())
+            self.assertEqual(output_path.read_bytes(), b"label,prompt\ncar,a car\n")
+            self.assertEqual(output_path.parent.name, "shared_inputs")
 
     def test_retry_cancel_and_delete_endpoints_update_expected_state(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Actions")
@@ -796,6 +1040,297 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(response.status_code, 500)
         self.assertEqual(json.loads(response.content)["type"], "too_many_active_batches")
         run_preset.apply_async.assert_not_called()
+
+    def test_run_preset_accepts_selected_item_scope(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Scoped")
+        item = VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="A", ext=".mp4"),
+            original_filename="a.mp4",
+            original_path="folder/a.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="B", ext=".mp4"),
+            original_filename="b.mp4",
+            original_path="folder/b.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/run-preset",
+                data=json.dumps(
+                    {
+                        "id": batch.id.hex,
+                        "scope": {
+                            "type": "item_ids",
+                            "item_ids": [item.id.hex],
+                        },
+                    }
+                ),
+                content_type="application/json",
+            )
+        )
+
+        with patch("backend.views.video_batch.run_video_batch_preset") as run_preset:
+            response = VideoBatchRunPreset.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        _, args, _ = run_preset.apply_async.mock_calls[0]
+        self.assertEqual(args[0][1], DEFAULT_BATCH_PRESET)
+        self.assertEqual(args[0][2], [item.id])
+
+    def test_run_plugin_set_dispatches_custom_preset_for_folder_scope(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Custom")
+        item = VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="A", ext=".mp4"),
+            original_filename="a.mp4",
+            original_path="folder/a.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="B", ext=".mp4"),
+            original_filename="b.mp4",
+            original_path="other/b.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/run-plugin-set",
+                data=json.dumps(
+                    {
+                        "id": batch.id.hex,
+                        "scope": {
+                            "type": "folder",
+                            "folder_path": "folder",
+                            "include_subfolders": True,
+                        },
+                        "steps": [{"plugin": "thumbnail", "parameters": []}],
+                    }
+                ),
+                content_type="application/json",
+            )
+        )
+
+        with patch("backend.views.video_batch.run_video_batch_preset") as run_preset:
+            response = VideoBatchRunPluginSet.as_view()(request)
+
+        data = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["item_count"], 1)
+        _, args, _ = run_preset.apply_async.mock_calls[0]
+        self.assertEqual(args[0][2], [item.id])
+        self.assertEqual(args[0][3]["steps"][0]["plugin"], "thumbnail")
+
+    def test_validate_plugin_set_returns_preflight_summary(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Validate")
+        VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="A", ext=".mp4"),
+            original_filename="a.mp4",
+            original_path="folder/a.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/validate-plugin-set",
+                data=json.dumps(
+                    {
+                        "id": batch.id.hex,
+                        "scope": {"type": "all"},
+                        "steps": [
+                            {
+                                "plugin": "audio_rms",
+                                "parameters": [
+                                    {"name": "timeline", "value": "Audio RMS"},
+                                    {"name": "sr", "value": 8000},
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                content_type="application/json",
+            )
+        )
+
+        response = VideoBatchValidatePluginSet.as_view()(request)
+        data = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["runnable_count"], 1)
+        self.assertEqual(data["step_count"], 1)
+        self.assertEqual(data["total_jobs"], 1)
+
+    def test_validate_plugin_set_rejects_unsupported_plugin(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Unsupported")
+        VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="A", ext=".mp4"),
+            original_filename="a.mp4",
+            original_path="folder/a.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/validate-plugin-set",
+                data=json.dumps(
+                    {
+                        "id": batch.id.hex,
+                        "scope": {"type": "all"},
+                        "steps": [{"plugin": "insightface_identification"}],
+                    }
+                ),
+                content_type="application/json",
+            )
+        )
+
+        with patch("backend.utils.batch_plugin_catalog.PluginManager") as plugin_manager:
+            plugin_manager.return_value.__contains__.return_value = False
+            response = VideoBatchValidatePluginSet.as_view()(request)
+        data = json.loads(response.content)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(data["type"], "plugin_not_batch_supported")
+
+    def test_validate_plugin_set_rejects_missing_required_parameter(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Missing parameter")
+        VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="A", ext=".mp4"),
+            original_filename="a.mp4",
+            original_path="folder/a.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/validate-plugin-set",
+                data=json.dumps(
+                    {
+                        "id": batch.id.hex,
+                        "scope": {"type": "all"},
+                        "steps": [
+                            {
+                                "plugin": "clip",
+                                "parameters": [
+                                    {"name": "timeline", "value": "CLIP"}
+                                ],
+                            }
+                        ],
+                    }
+                ),
+                content_type="application/json",
+            )
+        )
+
+        response = VideoBatchValidatePluginSet.as_view()(request)
+        data = json.loads(response.content)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(data["type"], "invalid_parameters")
+
+    def test_validate_plugin_set_reports_missing_timeline_skip(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Missing timeline")
+        item = VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="A", ext=".mp4"),
+            original_filename="a.mp4",
+            original_path="folder/a.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/validate-plugin-set",
+                data=json.dumps(
+                    {
+                        "id": batch.id.hex,
+                        "scope": {"type": "all"},
+                        "steps": [
+                            {
+                                "plugin": "shot_type_classification",
+                                "parameters": [
+                                    {"name": "timeline", "value": "Camera Setting"},
+                                    {"name": "fps", "value": 2},
+                                ],
+                                "parameter_resolution": {
+                                    "shot_timeline_id": {
+                                        "strategy": "timeline_by_name",
+                                        "name": "Shots",
+                                        "required": True,
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ),
+                content_type="application/json",
+            )
+        )
+
+        response = VideoBatchValidatePluginSet.as_view()(request)
+        data = json.loads(response.content)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(data["type"], "no_runnable_items")
+        self.assertEqual(
+            data["skipped_items"],
+            [{"item_id": item.id.hex, "reason": "missing_required_timeline"}],
+        )
+
+    def test_retry_custom_plugin_set_preserves_original_scope(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Retry custom")
+        item = VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="A", ext=".mp4"),
+            original_filename="a.mp4",
+            original_path="folder/a.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        VideoBatchItem.objects.create(
+            batch=batch,
+            video=Video.objects.create(owner=self.user, name="B", ext=".mp4"),
+            original_filename="b.mp4",
+            original_path="folder/b.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        batch.preset = "custom:retry"
+        batch.custom_preset_definition = {
+            "name": "Retry",
+            "description": "Custom plugin set",
+            "steps": [{"plugin": "thumbnail", "parameters": []}],
+        }
+        batch.custom_preset_item_ids = [item.id.hex]
+        batch.save()
+        VideoBatchPluginRun.objects.create(
+            batch=batch,
+            item=item,
+            preset=batch.preset,
+            step_index=0,
+            plugin="thumbnail",
+            status=VideoBatchPluginRun.STATUS_ERROR,
+            error="plugin_run_failed",
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/retry-failed-plugin-steps",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+
+        with patch("backend.views.video_batch.run_video_batch_preset") as run_preset:
+            response = VideoBatchRetryFailedPluginSteps.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        _, args, _ = run_preset.apply_async.mock_calls[0]
+        self.assertEqual(args[0][1], "custom:retry")
+        self.assertEqual(args[0][2], [item.id.hex])
+        self.assertEqual(args[0][3], batch.custom_preset_definition)
 
 
 class VideoBatchTaskDatabaseTests(TestCase):
@@ -1010,6 +1545,159 @@ class VideoBatchTaskDatabaseTests(TestCase):
             calls[0][1],
         )
 
+    def test_resolve_step_parameters_finds_timeline_by_name(self):
+        video = self.make_video()
+        item = VideoBatchItem.objects.create(
+            batch=VideoBatch.objects.create(owner=self.user, name="Timeline"),
+            video=video,
+            original_filename="video.mp4",
+            original_path="video.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        timeline = Timeline.objects.create(
+            video=video,
+            name="Shots",
+            type=Timeline.TYPE_PLUGIN_RESULT,
+        )
+        step = {
+            "plugin": "shot_type_classification",
+            "parameters": [
+                {"name": "timeline", "value": "Camera Setting"},
+                {"name": "fps", "value": 2},
+            ],
+            "parameter_resolution": {
+                "shot_timeline_id": {
+                    "strategy": "timeline_by_name",
+                    "name": "Shots",
+                    "required": True,
+                }
+            },
+        }
+
+        result = resolve_step_parameters(step, {}, item)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn(
+            {"name": "shot_timeline_id", "value": timeline.id.hex},
+            result["parameters"],
+        )
+
+    def test_resolve_step_parameters_skips_missing_timeline_by_name(self):
+        item = VideoBatchItem.objects.create(
+            batch=VideoBatch.objects.create(owner=self.user, name="Timeline"),
+            video=self.make_video(),
+            original_filename="video.mp4",
+            original_path="video.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        step = {
+            "plugin": "shot_type_classification",
+            "parameters": [{"name": "timeline", "value": "Camera Setting"}],
+            "parameter_resolution": {
+                "shot_timeline_id": {
+                    "strategy": "timeline_by_name",
+                    "name": "Shots",
+                    "required": True,
+                }
+            },
+        }
+
+        result = resolve_step_parameters(step, {}, item)
+
+        self.assertEqual(result, {"status": "skip", "type": "missing_required_timeline"})
+
+    def test_resolve_step_parameters_reuses_shared_file_path(self):
+        item = VideoBatchItem.objects.create(
+            batch=VideoBatch.objects.create(owner=self.user, name="Shared file"),
+            video=self.make_video(),
+            original_filename="video.mp4",
+            original_path="video.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        step = {
+            "plugin": "clip_ontology",
+            "parameters": [{"name": "timeline", "value": "CLIP Ontology"}],
+            "parameter_resolution": {
+                "concept_csv": {
+                    "strategy": "shared_file",
+                    "path": "/tmp/shared/ontology.csv",
+                    "required": True,
+                }
+            },
+        }
+
+        result = resolve_step_parameters(step, {}, item)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn(
+            {"name": "concept_csv", "path": "/tmp/shared/ontology.csv"},
+            result["parameters"],
+        )
+
+    def test_resolve_step_parameters_maps_multiple_scalar_timelines_by_name(self):
+        video = self.make_video()
+        item = VideoBatchItem.objects.create(
+            batch=VideoBatch.objects.create(owner=self.user, name="Scalar timelines"),
+            video=video,
+            original_filename="video.mp4",
+            original_path="video.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        plugin_run = PluginRun.objects.create(
+            video=video,
+            type="clip",
+            status=PluginRun.STATUS_DONE,
+        )
+        first_result = PluginRunResult.objects.create(
+            plugin_run=plugin_run,
+            name="first",
+            data_id="first-data",
+            type=PluginRunResult.TYPE_SCALAR,
+        )
+        second_result = PluginRunResult.objects.create(
+            plugin_run=plugin_run,
+            name="second",
+            data_id="second-data",
+            type=PluginRunResult.TYPE_SCALAR,
+        )
+        first_timeline = Timeline.objects.create(
+            video=video,
+            plugin_run_result=first_result,
+            name="First",
+            type=Timeline.TYPE_PLUGIN_RESULT,
+        )
+        second_timeline = Timeline.objects.create(
+            video=video,
+            plugin_run_result=second_result,
+            name="Second",
+            type=Timeline.TYPE_PLUGIN_RESULT,
+        )
+        step = {
+            "plugin": "aggregate_scalar",
+            "parameters": [
+                {"name": "timeline", "value": "Aggregate Scalar"},
+                {"name": "aggregation", "value": 0},
+            ],
+            "parameter_resolution": {
+                "timeline_ids": {
+                    "strategy": "scalar_timelines_by_name",
+                    "names": ["First", "Second"],
+                    "required": True,
+                }
+            },
+        }
+
+        result = resolve_step_parameters(step, {}, item)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn(
+            {
+                "name": "timeline_ids",
+                "value": [first_timeline.id.hex, second_timeline.id.hex],
+            },
+            result["parameters"],
+        )
+
     @override_settings(MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH=1)
     def test_batch_scheduler_respects_per_batch_parallelism_limit(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Limited")
@@ -1033,6 +1721,34 @@ class VideoBatchTaskDatabaseTests(TestCase):
             1,
         )
         apply_async.assert_called_once()
+
+    @override_settings(MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH=4)
+    def test_batch_scheduler_limits_rows_to_scoped_items(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Scoped scheduler")
+        selected_item = VideoBatchItem.objects.create(
+            batch=batch,
+            video=self.make_video("Selected"),
+            original_filename="selected.mp4",
+            original_path="folder/selected.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        unselected_item = VideoBatchItem.objects.create(
+            batch=batch,
+            video=self.make_video("Unselected"),
+            original_filename="unselected.mp4",
+            original_path="folder/unselected.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+
+        with patch("backend.tasks.batch.run_video_batch_plugin_step.apply_async"):
+            run_video_batch_preset(
+                batch.id,
+                "default_batch_analysis",
+                item_ids=[selected_item.id],
+            )
+
+        self.assertEqual(selected_item.plugin_runs.count(), 3)
+        self.assertEqual(unselected_item.plugin_runs.count(), 0)
 
     @override_settings(MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL=1)
     def test_batch_scheduler_respects_global_plugin_backpressure(self):
@@ -1088,6 +1804,81 @@ class VideoBatchTaskDatabaseTests(TestCase):
         item.refresh_from_db()
         self.assertEqual(item.ingest_status, VideoBatchItem.STATUS_ERROR)
         self.assertEqual(item.ingest_error, "video_deleted")
+
+    def test_plugin_manager_returns_failure_type_for_plugin_run_failed(self):
+        video = self.make_video()
+
+        class FailingPlugin:
+            def __call__(self, parameters, **kwargs):
+                raise PluginRunFailed("video_decode_failed")
+
+        previous_plugin = PluginManager._plugins.get("failing_test_plugin")
+        PluginManager._plugins["failing_test_plugin"] = FailingPlugin
+        try:
+            result = PluginManager()(
+                "failing_test_plugin",
+                video=video,
+                user=self.user,
+                run_async=False,
+            )
+        finally:
+            if previous_plugin is None:
+                del PluginManager._plugins["failing_test_plugin"]
+            else:
+                PluginManager._plugins["failing_test_plugin"] = previous_plugin
+
+        self.assertFalse(result["status"])
+        self.assertEqual(result["type"], "video_decode_failed")
+        plugin_run = PluginRun.objects.get(id=result["plugin_run"])
+        self.assertEqual(plugin_run.status, PluginRun.STATUS_ERROR)
+
+    def test_batch_plugin_step_records_plugin_failure_type(self):
+        batch = VideoBatch.objects.create(
+            owner=self.user,
+            name="Plugin failure type",
+            status=VideoBatch.STATUS_RUNNING,
+        )
+        item = VideoBatchItem.objects.create(
+            batch=batch,
+            video=self.make_video(),
+            original_filename="video.mp4",
+            original_path="video.mp4",
+            ingest_status=VideoBatchItem.STATUS_READY,
+        )
+        tracker = VideoBatchPluginRun.objects.create(
+            batch=batch,
+            item=item,
+            preset="default_batch_analysis",
+            step_index=0,
+            plugin="thumbnail",
+            status=VideoBatchPluginRun.STATUS_RUNNING,
+        )
+
+        class FakePluginManager:
+            def __call__(self, plugin, video, user, parameters, run_async):
+                plugin_run = PluginRun.objects.create(
+                    video=video,
+                    type=plugin,
+                    status=PluginRun.STATUS_ERROR,
+                )
+                return {
+                    "status": False,
+                    "type": "video_decode_failed",
+                    "plugin_run": plugin_run.id.hex,
+                }
+
+        with patch("backend.tasks.batch.PluginManager", return_value=FakePluginManager()):
+            with patch("backend.tasks.batch.run_video_batch_preset.apply_async"):
+                run_video_batch_plugin_step(
+                    tracker.id,
+                    batch.id,
+                    "default_batch_analysis",
+                )
+
+        tracker.refresh_from_db()
+        self.assertEqual(tracker.status, VideoBatchPluginRun.STATUS_ERROR)
+        self.assertEqual(tracker.error, "video_decode_failed")
+        self.assertIsNotNone(tracker.plugin_run)
 
     def test_batch_plugin_step_respects_mid_run_cancellation(self):
         batch = VideoBatch.objects.create(

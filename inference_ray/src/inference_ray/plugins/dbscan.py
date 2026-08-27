@@ -54,6 +54,10 @@ class DBScanClustering(
             inputs["embeddings"] as embeddings,
             data_manager.create_data("ClusterData") as output_data,
         ):
+            if not embeddings.embeddings:
+                output_data.clusters = []
+                return {"cluster_data": output_data}
+
             np_embeddings = np.squeeze(
                 np.asarray([em.embedding for em in embeddings.embeddings])
             )

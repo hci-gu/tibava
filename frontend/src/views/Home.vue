@@ -7,9 +7,6 @@
             <ModalVideoUpload />
           </v-col>
           <v-col cols="2">
-            <ModalVideoBatchUpload />
-          </v-col>
-          <v-col cols="2">
             <v-btn :disabled="selectedVideosIds.length == 0" @click="showModalPlugin = true" class="ma-6">
               <v-icon color="primary">mdi-plus</v-icon>
               Run Batch Plugin
@@ -92,7 +89,6 @@ import Vue from "vue";
 import router from "../router";
 import ModalPlugin from "@/components/ModalPlugin.vue";
 import ModalVideoUpload from "@/components/ModalVideoUpload.vue";
-import ModalVideoBatchUpload from "@/components/ModalVideoBatchUpload.vue";
 import ModalVideoRename from "@/components/ModalVideoRename.vue";
 import TimeMixin from "../mixins/time";
 import { mapStores } from "pinia";
@@ -195,7 +191,6 @@ export default {
   },
   components: {
     ModalVideoUpload,
-    ModalVideoBatchUpload,
     ModalVideoRename,
     ModalPlugin
   },

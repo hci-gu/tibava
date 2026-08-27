@@ -139,6 +139,8 @@ class VideoBatch(models.Model):
     )
     source_path = models.CharField(max_length=1024, blank=True, null=True)
     preset = models.CharField(max_length=256, blank=True, null=True)
+    custom_preset_definition = models.JSONField(blank=True, null=True)
+    custom_preset_item_ids = models.JSONField(blank=True, null=True)
     auto_run_preset = models.BooleanField(default=False)
 
     total_count = models.IntegerField(default=0)
@@ -184,6 +186,8 @@ class VideoBatch(models.Model):
             "status": self.STATUS[self.status],
             "source_type": self.SOURCE[self.source_type],
             "preset": self.preset,
+            "custom_preset_definition": self.custom_preset_definition,
+            "custom_preset_item_ids": self.custom_preset_item_ids,
             "auto_run_preset": self.auto_run_preset,
             "total_count": self.total_count,
             "ready_count": self.ready_count,

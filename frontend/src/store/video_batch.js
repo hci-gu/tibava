@@ -9,8 +9,10 @@ export const useVideoBatchStore = defineStore("videoBatch", {
       batches: {},
       batchList: [],
       presets: [],
+      pluginCatalog: [],
       isLoading: false,
       isUploading: false,
+      isExportingElan: false,
       progress: 0,
     };
   },
@@ -27,6 +29,13 @@ export const useVideoBatchStore = defineStore("videoBatch", {
       return axios.get(`${config.API_LOCATION}/video/batch/presets`).then((res) => {
         if (res.data.status === "ok") {
           this.presets = res.data.entries;
+        }
+      });
+    },
+    async fetchPluginCatalog() {
+      return axios.get(`${config.API_LOCATION}/video/batch/plugin-catalog`).then((res) => {
+        if (res.data.status === "ok") {
+          this.pluginCatalog = res.data.entries;
         }
       });
     },
@@ -65,6 +74,16 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         .finally(() => {
           this.isLoading = false;
         });
+    },
+    async uploadSharedInput({ batchId, file }) {
+      const formData = new FormData();
+      formData.append("id", batchId);
+      formData.append("file", file);
+      return axios
+        .post(`${config.API_LOCATION}/video/batch/shared-input/upload`, formData, {
+          headers: { "Content-Type": "multipart/form-data" },
+        })
+        .then((res) => res.data);
     },
     async upload({ mode, files = [], zip = null, name, preset, autoRunPreset }) {
       const formData = new FormData();
@@ -108,6 +127,29 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         preset,
       });
     },
+    async runScopedPreset({ batchId, preset = null, scope = null }) {
+      return axios.post(`${config.API_LOCATION}/video/batch/run-preset`, {
+        id: batchId,
+        preset,
+        scope,
+      });
+    },
+    async runPluginSet({ batchId, name, scope, steps }) {
+      return axios.post(`${config.API_LOCATION}/video/batch/run-plugin-set`, {
+        id: batchId,
+        name,
+        scope,
+        steps,
+      });
+    },
+    async validatePluginSet({ batchId, name, scope, steps }) {
+      return axios.post(`${config.API_LOCATION}/video/batch/validate-plugin-set`, {
+        id: batchId,
+        name,
+        scope,
+        steps,
+      });
+    },
     async retryFailed(batchId) {
       return axios.post(`${config.API_LOCATION}/video/batch/retry-failed`, {
         id: batchId,
@@ -118,6 +160,35 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         `${config.API_LOCATION}/video/batch/retry-failed-plugin-steps`,
         { id: batchId }
       );
+    },
+    async exportElan(batchId, batchName) {
+      this.isExportingElan = true;
+      return axios
+        .post(
+          `${config.API_LOCATION}/video/batch/export-elan`,
+          { id: batchId },
+          { responseType: "blob" }
+        )
+        .then((res) => {
+          const disposition = res.headers["content-disposition"] || "";
+          const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+          const filename = filenameMatch
+            ? filenameMatch[1]
+            : `${batchName || batchId}-elan.zip`;
+          const url = URL.createObjectURL(
+            new Blob([res.data], { type: "application/zip" })
+          );
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+        })
+        .finally(() => {
+          this.isExportingElan = false;
+        });
     },
     async delete(batchId) {
       return axios

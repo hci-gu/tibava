@@ -151,15 +151,6 @@ def extract_zip_videos(
                 continue
 
             if not is_allowed_video_extension(normalized_name, allowed_extensions):
-                entries.append(
-                    {
-                        "status": "error",
-                        "original_filename": Path(normalized_name).name,
-                        "original_path": normalized_name,
-                        "file_size": info.file_size,
-                        "ingest_error": "wrong_file_extension",
-                    }
-                )
                 continue
 
             if valid_count >= max_files:

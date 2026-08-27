@@ -25,8 +25,11 @@ from backend.utils.batch_upload import (
 from backend.utils.plugin_presets import (
     DEFAULT_BATCH_PRESET,
     build_step_parameters,
+    resolve_dependency,
     validate_batch_preset,
+    validate_batch_preset_definition,
 )
+from backend.utils.batch_plugin_catalog import timeline_by_name
 from backend.utils.video_ingest import PathUploadFile, ingest_video_file
 
 
@@ -209,11 +212,24 @@ def mark_deleted_video_items(batch):
         batch.refresh_counters()
 
 
-def ensure_batch_plugin_run_rows(batch, preset_id, preset):
-    for item in batch.items.filter(
+def scoped_ready_items(batch, item_ids=None):
+    items = batch.items.filter(
         ingest_status=VideoBatchItem.STATUS_READY,
         video__isnull=False,
-    ).order_by("original_path", "original_filename"):
+    )
+    if item_ids is not None:
+        items = items.filter(id__in=item_ids)
+    return items.order_by("original_path", "original_filename")
+
+
+def resolve_preset_definition(preset_id=None, preset_definition=None):
+    if preset_definition is not None:
+        return validate_batch_preset_definition(preset_definition)
+    return validate_batch_preset(preset_id)
+
+
+def ensure_batch_plugin_run_rows(batch, preset_id, preset, item_ids=None):
+    for item in scoped_ready_items(batch, item_ids):
         for step_index, step in enumerate(preset["steps"]):
             VideoBatchPluginRun.objects.get_or_create(
                 batch=batch,
@@ -251,6 +267,69 @@ def get_step_outputs_for_item(batch, item, preset_id, preset, before_step_index)
             return None
         outputs[step["plugin"]] = get_completed_step_outputs(tracker)
     return outputs
+
+
+def resolve_step_parameters(step, outputs, item):
+    parameters = build_step_parameters(step, outputs)
+    if parameters is None:
+        return {"status": "skip", "type": "missing_dependency_output"}
+
+    for parameter_name, resolution in step.get("parameter_resolution", {}).items():
+        strategy = resolution.get("strategy")
+        required = resolution.get("required", True)
+
+        if strategy == "previous_step_output":
+            value = resolve_dependency(resolution.get("expression", ""), outputs)
+            if value is None and required:
+                return {"status": "skip", "type": "missing_dependency_output"}
+            if value is not None:
+                parameters.append({"name": parameter_name, "value": value})
+            continue
+
+        if strategy == "timeline_by_name":
+            timeline = timeline_by_name(item.video, resolution.get("name", ""))
+            if timeline is None and required:
+                return {"status": "skip", "type": "missing_required_timeline"}
+            if timeline is not None:
+                parameters.append({"name": parameter_name, "value": timeline.id.hex})
+            continue
+
+        if strategy == "scalar_timeline_by_name":
+            timeline = timeline_by_name(
+                item.video,
+                resolution.get("name", ""),
+                scalar=True,
+            )
+            if timeline is None and required:
+                return {"status": "skip", "type": "missing_required_timeline"}
+            if timeline is not None:
+                parameters.append({"name": parameter_name, "value": timeline.id.hex})
+            continue
+
+        if strategy == "scalar_timelines_by_name":
+            names = resolution.get("names", [])
+            if not names and required:
+                return {"status": "skip", "type": "missing_required_timeline"}
+            timelines = []
+            for name in names:
+                timeline = timeline_by_name(item.video, name, scalar=True)
+                if timeline is None and required:
+                    return {"status": "skip", "type": "missing_required_timeline"}
+                if timeline is not None:
+                    timelines.append(timeline.id.hex)
+            parameters.append({"name": parameter_name, "value": timelines})
+            continue
+
+        if strategy == "shared_file":
+            if "path" not in resolution and required:
+                return {"status": "error", "type": "shared_input_missing"}
+            if "path" in resolution:
+                parameters.append({"name": parameter_name, "path": resolution["path"]})
+            continue
+
+        return {"status": "error", "type": "unsupported_batch_parameter"}
+
+    return {"status": "ok", "parameters": parameters}
 
 
 def mark_blocked_dependents(batch, item, preset_id, failed_step_index, error):
@@ -299,10 +378,14 @@ def next_schedulable_tracker(batch, item, preset_id, preset):
         if tracker.status == VideoBatchPluginRun.STATUS_RUNNING:
             return None
 
-        parameters = build_step_parameters(step, outputs)
-        if parameters is None:
-            tracker.status = VideoBatchPluginRun.STATUS_ERROR
-            tracker.error = "dependency_not_ready"
+        resolved = resolve_step_parameters(step, outputs, item)
+        if resolved["status"] != "ok":
+            tracker.status = (
+                VideoBatchPluginRun.STATUS_SKIPPED
+                if resolved["status"] == "skip"
+                else VideoBatchPluginRun.STATUS_ERROR
+            )
+            tracker.error = resolved["type"]
             tracker.save(update_fields=["status", "error", "update_date"])
             mark_blocked_dependents(
                 batch,
@@ -318,7 +401,7 @@ def next_schedulable_tracker(batch, item, preset_id, preset):
     return None
 
 
-def dispatch_batch_plugin_step(tracker, batch, preset_id):
+def dispatch_batch_plugin_step(tracker, batch, preset_id, item_ids=None, preset_definition=None):
     updated = VideoBatchPluginRun.objects.filter(
         id=tracker.id,
         status=VideoBatchPluginRun.STATUS_PENDING,
@@ -327,9 +410,17 @@ def dispatch_batch_plugin_step(tracker, batch, preset_id):
         return False
 
     if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
-        run_video_batch_plugin_step(tracker.id, batch.id, preset_id)
+        run_video_batch_plugin_step(
+            tracker.id,
+            batch.id,
+            preset_id,
+            item_ids=item_ids,
+            preset_definition=preset_definition,
+        )
     else:
-        run_video_batch_plugin_step.apply_async((tracker.id, batch.id, preset_id))
+        run_video_batch_plugin_step.apply_async(
+            (tracker.id, batch.id, preset_id, item_ids, preset_definition)
+        )
     return True
 
 
@@ -431,7 +522,13 @@ def ingest_video_batch(self, batch_id):
 
 
 @shared_task(bind=True)
-def run_video_batch_preset(self, batch_id, preset_id=None):
+def run_video_batch_preset(
+    self,
+    batch_id,
+    preset_id=None,
+    item_ids=None,
+    preset_definition=None,
+):
     scheduler_start_time = time.monotonic()
     try:
         batch = VideoBatch.objects.get(id=batch_id)
@@ -439,7 +536,12 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
         logger.error("Video batch %s does not exist", batch_id)
         return
 
-    validation = validate_batch_preset(preset_id)
+    if preset_definition is None and preset_id == batch.preset:
+        preset_definition = batch.custom_preset_definition
+    if item_ids is None and preset_definition is not None:
+        item_ids = batch.custom_preset_item_ids
+
+    validation = resolve_preset_definition(preset_id, preset_definition)
     if validation["status"] != "ok":
         batch.status = VideoBatch.STATUS_ERROR
         batch.save(update_fields=["status", "update_date"])
@@ -462,7 +564,7 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
     batch.status = VideoBatch.STATUS_RUNNING
     batch.preset = preset_id
     batch.save(update_fields=["status", "preset", "update_date"])
-    ensure_batch_plugin_run_rows(batch, preset_id, preset)
+    ensure_batch_plugin_run_rows(batch, preset_id, preset, item_ids=item_ids)
 
     dispatched_count = 0
     while True:
@@ -480,15 +582,18 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
             break
 
         dispatched = False
-        for item in batch.items.filter(
-            ingest_status=VideoBatchItem.STATUS_READY,
-            video__isnull=False,
-        ).order_by("original_path", "original_filename"):
+        for item in scoped_ready_items(batch, item_ids):
             tracker = next_schedulable_tracker(batch, item, preset_id, preset)
             if tracker is None:
                 continue
 
-            dispatched = dispatch_batch_plugin_step(tracker, batch, preset_id)
+            dispatched = dispatch_batch_plugin_step(
+                tracker,
+                batch,
+                preset_id,
+                item_ids=item_ids,
+                preset_definition=preset_definition,
+            )
             if dispatched:
                 dispatched_count += 1
                 capacity -= 1
@@ -513,7 +618,14 @@ def run_video_batch_preset(self, batch_id, preset_id=None):
 
 
 @shared_task(bind=True)
-def run_video_batch_plugin_step(self, tracker_id, batch_id, preset_id):
+def run_video_batch_plugin_step(
+    self,
+    tracker_id,
+    batch_id,
+    preset_id,
+    item_ids=None,
+    preset_definition=None,
+):
     step_start_time = time.monotonic()
     try:
         tracker = VideoBatchPluginRun.objects.select_related(
@@ -536,15 +648,19 @@ def run_video_batch_plugin_step(self, tracker_id, batch_id, preset_id):
         tracker.error = "video_deleted"
         tracker.save(update_fields=["status", "error", "update_date"])
         mark_deleted_video_items(batch)
-        run_video_batch_preset.apply_async((batch.id, preset_id))
+        run_video_batch_preset.apply_async(
+            (batch.id, preset_id, item_ids, preset_definition)
+        )
         return
 
-    validation = validate_batch_preset(preset_id)
+    validation = resolve_preset_definition(preset_id, preset_definition)
     if validation["status"] != "ok":
         tracker.status = VideoBatchPluginRun.STATUS_ERROR
         tracker.error = validation.get("type", "invalid_preset")
         tracker.save(update_fields=["status", "error", "update_date"])
-        run_video_batch_preset.apply_async((batch.id, preset_id))
+        run_video_batch_preset.apply_async(
+            (batch.id, preset_id, item_ids, preset_definition)
+        )
         return
 
     preset = validation["preset"]
@@ -557,13 +673,24 @@ def run_video_batch_plugin_step(self, tracker_id, batch_id, preset_id):
         preset,
         tracker.step_index,
     )
-    parameters = build_step_parameters(step, outputs or {})
-    if outputs is None or parameters is None:
-        tracker.status = VideoBatchPluginRun.STATUS_ERROR
-        tracker.error = "dependency_not_ready"
+    resolved = (
+        {"status": "skip", "type": "missing_dependency_output"}
+        if outputs is None
+        else resolve_step_parameters(step, outputs, tracker.item)
+    )
+    if resolved["status"] != "ok":
+        tracker.status = (
+            VideoBatchPluginRun.STATUS_SKIPPED
+            if resolved["status"] == "skip"
+            else VideoBatchPluginRun.STATUS_ERROR
+        )
+        tracker.error = resolved["type"]
         tracker.save(update_fields=["status", "error", "update_date"])
-        run_video_batch_preset.apply_async((batch.id, preset_id))
+        run_video_batch_preset.apply_async(
+            (batch.id, preset_id, item_ids, preset_definition)
+        )
         return
+    parameters = resolved["parameters"]
 
     plugin_manager = PluginManager()
     result = plugin_manager(
@@ -589,7 +716,7 @@ def run_video_batch_plugin_step(self, tracker_id, batch_id, preset_id):
 
     if not result.get("status"):
         tracker.status = VideoBatchPluginRun.STATUS_ERROR
-        tracker.error = "plugin_run_failed"
+        tracker.error = result.get("type") or result.get("error") or "plugin_run_failed"
     else:
         tracker.status = VideoBatchPluginRun.STATUS_DONE
         tracker.error = ""
@@ -604,4 +731,4 @@ def run_video_batch_plugin_step(self, tracker_id, batch_id, preset_id):
         queue_wait_seconds,
         time.monotonic() - step_start_time,
     )
-    run_video_batch_preset.apply_async((batch.id, preset_id))
+    run_video_batch_preset.apply_async((batch.id, preset_id, item_ids, preset_definition))

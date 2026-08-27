@@ -10,6 +10,7 @@ from backend.models import PluginRun, Video, TibavaUser, PluginRunResult
 from data import DataManager
 
 from django.conf import settings
+from backend.utils.task import PluginRunFailed
 
 # class PluginRunResults(datacla):
 
@@ -116,6 +117,15 @@ class PluginManager:
                 if plugin_result:
                     result["result"] = plugin_result
 
+            except PluginRunFailed as exc:
+                logger.exception(f"Failed to run plugin {plugin}: {exc.code}")
+
+                if plugin_run is not None:
+                    plugin_run.status = PluginRun.STATUS_ERROR
+                    plugin_run.save()
+                result["status"] = False
+                result["type"] = exc.code
+                return result
             except Exception:
                 logger.exception(f"Failed to run plugin {plugin}")
 
@@ -123,6 +133,7 @@ class PluginManager:
                     plugin_run.status = PluginRun.STATUS_ERROR
                     plugin_run.save()
                 result["status"] = False
+                result["type"] = "plugin_run_failed"
                 return result
         return result
 
@@ -218,6 +229,8 @@ def run_plugin(self, args):
 
         return
 
+    except PluginRunFailed as exc:
+        logger.exception(f"Plugin run failed for {plugin}: {exc.code}")
     except Exception:
         logger.exception(f"Plugin run failed for {plugin}")
 

@@ -11,6 +11,12 @@ from backend.utils import media_path_to_video
 logger = logging.getLogger(__name__)
 
 
+class PluginRunFailed(Exception):
+    def __init__(self, code="plugin_run_failed"):
+        super().__init__(code)
+        self.code = code
+
+
 class Task:
     def __init__(self):
         pass
@@ -53,6 +59,7 @@ class Task:
         outputs: List = None,
         downloads: List = None,
         plugin_run: PluginRun = None,
+        failure_type: str = None,
     ) -> str:
 
         if parameters is None:
@@ -70,6 +77,7 @@ class Task:
             [{"name": k, "value": v} for k, v in parameters.items()],
         )
         if job_id is None:
+            self.last_analyser_error = failure_type or f"{analyser}_start_failed"
             return None
         logger.info(
             f"Plugin started: analyser job_id: {job_id} plugin_run_id: {plugin_run}"
@@ -80,6 +88,7 @@ class Task:
             logger.error(
                 f"Plugin is crashing: analyser job_id: {job_id} plugin_run_id: {plugin_run}"
             )
+            self.last_analyser_error = failure_type or f"{analyser}_failed"
             return None
 
         result_ids = {}

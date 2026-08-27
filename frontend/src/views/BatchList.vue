@@ -28,7 +28,26 @@
         <template v-slot:item.progress="{ item }">
           <v-progress-linear :value="batchProgress(item)" height="8"></v-progress-linear>
         </template>
+        <template v-slot:item.actions="{ item }">
+          <v-btn icon small title="Delete batch" @click.stop="askDeleteBatch(item)">
+            <v-icon small color="red">mdi-trash-can-outline</v-icon>
+          </v-btn>
+        </template>
       </v-data-table>
+
+      <v-dialog v-model="confirmDelete" max-width="420">
+        <v-card>
+          <v-card-title>Delete batch</v-card-title>
+          <v-card-text>
+            This removes "{{ batchToDeleteName }}" from the batch list and deletes any remaining temporary batch sources.
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer></v-spacer>
+            <v-btn text @click="confirmDelete = false">Keep batch</v-btn>
+            <v-btn color="red" text :loading="isDeleting" @click="deleteBatch">Delete</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
     </v-container>
   </v-main>
 </template>
@@ -51,7 +70,11 @@ export default {
         { text: "Plugins done", value: "plugin_done_count" },
         { text: "Plugins failed", value: "plugin_failed_count" },
         { text: "Progress", value: "progress", sortable: false },
+        { text: "", value: "actions", sortable: false, align: "end", width: 56 },
       ],
+      confirmDelete: false,
+      batchToDelete: null,
+      isDeleting: false,
     };
   },
   mounted() {
@@ -60,6 +83,9 @@ export default {
   computed: {
     batches() {
       return this.videoBatchStore.all;
+    },
+    batchToDeleteName() {
+      return this.batchToDelete ? this.batchToDelete.name : "";
     },
     ...mapStores(useUserStore, useVideoBatchStore),
   },
@@ -77,6 +103,21 @@ export default {
       if (status === "READY") return "green";
       if (status === "RUNNING") return "blue";
       return "orange";
+    },
+    askDeleteBatch(batch) {
+      this.batchToDelete = batch;
+      this.confirmDelete = true;
+    },
+    async deleteBatch() {
+      if (!this.batchToDelete) return;
+      this.isDeleting = true;
+      try {
+        await this.videoBatchStore.delete(this.batchToDelete.id);
+        this.confirmDelete = false;
+        this.batchToDelete = null;
+      } finally {
+        this.isDeleting = false;
+      }
     },
   },
   components: {

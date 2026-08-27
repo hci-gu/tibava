@@ -18,7 +18,7 @@ from backend.plugin_manager import PluginManager
 from ..utils.analyser_client import TaskAnalyserClient
 from data import DataManager
 from backend.utils.parser import Parser
-from backend.utils.task import Task
+from backend.utils.task import PluginRunFailed, Task
 
 from django.db import transaction
 from django.conf import settings
@@ -65,10 +65,13 @@ class ShotDetection(Task):
             parameters={"fps": parameters.get("fps")},
             inputs={"video": video_id},
             downloads=["shots"],
+            failure_type="video_decode_failed",
         )
 
         if result is None:
-            raise Exception
+            raise PluginRunFailed(
+                getattr(self, "last_analyser_error", None) or "video_decode_failed"
+            )
 
         if dry_run or plugin_run is None:
             logging.warning("dry_run or plugin_run is None")

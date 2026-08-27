@@ -15,6 +15,20 @@
             <v-icon left>mdi-play</v-icon>
             Run preset
           </v-btn>
+          <v-btn outlined class="mr-2" @click="openCustomPluginSetForAll">
+            <v-icon left>mdi-playlist-check</v-icon>
+            Custom set
+          </v-btn>
+          <v-btn
+            outlined
+            class="mr-2"
+            :disabled="!hasReadyVideos"
+            :loading="videoBatchStore.isExportingElan"
+            @click="exportElan"
+          >
+            <v-icon left>mdi-file-export-outline</v-icon>
+            Export ELAN
+          </v-btn>
           <v-btn outlined class="mr-2" @click="retryFailed">
             <v-icon left>mdi-refresh</v-icon>
             Retry ingest
@@ -49,11 +63,26 @@
         </v-col>
       </v-row>
 
+      <v-alert v-if="exportError" dense outlined type="error" dismissible @input="exportError = ''">
+        {{ exportError }}
+      </v-alert>
+
       <v-row class="mb-4">
-        <v-col cols="12" md="3">
+        <v-col cols="12" md="2">
           <v-select v-model="filter" :items="filters" label="Status" hide-details></v-select>
         </v-col>
-        <v-col cols="12" md="5">
+        <v-col cols="12" md="3">
+          <v-select
+            v-model="folderFilter"
+            :items="folderOptions"
+            item-text="label"
+            item-value="value"
+            label="Folder"
+            hide-details
+            clearable
+          ></v-select>
+        </v-col>
+        <v-col cols="12" md="3">
           <v-text-field v-model="search" label="Search name or path" hide-details clearable></v-text-field>
         </v-col>
         <v-col cols="12" md="4">
@@ -63,20 +92,42 @@
         </v-col>
       </v-row>
 
-      <v-row v-if="selected.length" class="mb-4" align="center">
+      <v-row class="mb-4" align="center">
         <v-col cols="12">
           <v-toolbar dense flat class="selection-toolbar">
-            <span class="text-caption mr-4">{{ selected.length }} selected</span>
+            <span class="text-caption mr-4">{{ selectedItemIds.length }} / {{ tableItems.length }} selected</span>
+            <v-btn small outlined class="mr-2" @click="selectVisible">
+              <v-icon left small>mdi-checkbox-multiple-marked-outline</v-icon>
+              Select visible
+            </v-btn>
+            <v-btn small outlined class="mr-2" @click="invertVisibleSelection">
+              <v-icon left small>mdi-checkbox-multiple-blank-outline</v-icon>
+              Invert visible
+            </v-btn>
+            <v-btn small outlined class="mr-2" :disabled="!folderFilter" @click="selectCurrentFolder">
+              <v-icon left small>mdi-folder-check-outline</v-icon>
+              Select folder
+            </v-btn>
             <v-btn small outlined class="mr-2" @click="openSelectedVideos">
               <v-icon left small>mdi-open-in-new</v-icon>
               Open first
+            </v-btn>
+            <v-btn
+              small
+              outlined
+              class="mr-2"
+              :disabled="!readySelectedItemIds.length"
+              @click="openCustomPluginSetForSelection"
+            >
+              <v-icon left small>mdi-playlist-check</v-icon>
+              Run plugins
             </v-btn>
             <v-btn small outlined class="mr-2" @click="filter = 'ERROR'">
               <v-icon left small>mdi-alert-circle-outline</v-icon>
               Show errors
             </v-btn>
             <v-spacer></v-spacer>
-            <v-btn small icon @click="selected = []" title="Clear selection">
+            <v-btn small icon @click="clearSelection" title="Clear selection">
               <v-icon small>mdi-close</v-icon>
             </v-btn>
           </v-toolbar>
@@ -88,7 +139,7 @@
       </v-alert>
 
       <v-data-table
-        v-model="selected"
+        v-model="selectedRows"
         :headers="tableHeaders"
         :items="tableItems"
         :loading="videoBatchStore.isLoading"
@@ -108,9 +159,25 @@
           <span>No videos match the current filter.</span>
         </template>
         <template v-slot:group.header="{ group, headers, toggle, isOpen }">
-          <td :colspan="headers.length" class="folder-row" @click="toggle">
-            <v-icon small class="mr-1">{{ isOpen ? "mdi-folder-open-outline" : "mdi-folder-outline" }}</v-icon>
-            {{ group || "Root" }}
+          <td :colspan="headers.length" class="folder-row">
+            <v-checkbox
+              class="folder-checkbox"
+              dense
+              hide-details
+              :input-value="folderSelectionState(group).all"
+              :indeterminate="folderSelectionState(group).some"
+              @click.stop="toggleFolderSelection(group)"
+            ></v-checkbox>
+            <span class="folder-label" @click="toggle">
+              <v-icon small class="mr-1">{{ isOpen ? "mdi-folder-open-outline" : "mdi-folder-outline" }}</v-icon>
+              {{ group || "Root" }} ({{ folderItems(group).length }})
+            </span>
+            <v-btn icon small title="Filter folder" @click.stop="folderFilter = group">
+              <v-icon small>mdi-filter-outline</v-icon>
+            </v-btn>
+            <v-btn icon small title="Run plugins for folder" @click.stop="openCustomPluginSetForFolder(group)">
+              <v-icon small>mdi-playlist-play</v-icon>
+            </v-btn>
           </td>
         </template>
         <template v-slot:item.video_link="{ item }">
@@ -160,7 +227,26 @@
       <v-dialog v-model="confirmRunPreset" max-width="420">
         <v-card>
           <v-card-title>Run preset</v-card-title>
-          <v-card-text>This starts the configured preset for all ready videos in this batch.</v-card-text>
+          <v-card-text>
+            <v-radio-group v-model="presetScopeMode" dense>
+              <v-radio label="All ready videos" value="all"></v-radio>
+              <v-radio
+                :label="`Selected ready videos (${readySelectedItemIds.length})`"
+                value="selected"
+                :disabled="!readySelectedItemIds.length"
+              ></v-radio>
+              <v-radio
+                :label="`Current folder (${currentFolderReadyItemIds.length})`"
+                value="folder"
+                :disabled="!folderFilter || !currentFolderReadyItemIds.length"
+              ></v-radio>
+              <v-radio
+                :label="`Filtered ready videos (${filteredReadyItemIds.length})`"
+                value="filtered"
+                :disabled="!filteredReadyItemIds.length"
+              ></v-radio>
+            </v-radio-group>
+          </v-card-text>
           <v-card-actions>
             <v-spacer></v-spacer>
             <v-btn text @click="confirmRunPreset = false">Cancel</v-btn>
@@ -168,6 +254,14 @@
           </v-card-actions>
         </v-card>
       </v-dialog>
+
+      <ModalBatchPluginSet
+        v-model="showCustomPluginSet"
+        :batch-id="batchId"
+        :item-ids="customPluginItemIds"
+        :scope-label="customPluginScopeLabel"
+        @ran="fetchBatch"
+      />
 
       <v-dialog v-model="confirmCancel" max-width="420">
         <v-card>
@@ -199,17 +293,24 @@
 <script>
 import { mapStores } from "pinia";
 import { useVideoBatchStore } from "@/store/video_batch";
+import ModalBatchPluginSet from "@/components/ModalBatchPluginSet.vue";
 
 export default {
   data() {
     return {
       filter: "All",
+      folderFilter: null,
       search: "",
-      selected: [],
+      selectedItemIds: [],
+      presetScopeMode: "all",
+      showCustomPluginSet: false,
+      customPluginItemIds: [],
+      customPluginScopeLabel: "all ready videos",
       timer: null,
       confirmRunPreset: false,
       confirmCancel: false,
       confirmDelete: false,
+      exportError: "",
       filters: [
         "All",
         "PENDING",
@@ -249,16 +350,21 @@ export default {
       if (!this.batch || !this.batch.items) return [];
       const search = (this.search || "").toLowerCase();
       return this.batch.items.filter((item) => {
+        const folderPath = this.folderPathForItem(item);
         const pluginStatuses = this.pluginsForItem(item).map((plugin) => plugin.status);
         const matchesFilter =
           this.filter === "All" ||
           item.ingest_status === this.filter ||
           pluginStatuses.includes(this.filter);
+        const matchesFolder =
+          !this.folderFilter ||
+          folderPath === this.folderFilter ||
+          folderPath.startsWith(`${this.folderFilter}/`);
         const matchesSearch =
           !search ||
           item.original_path.toLowerCase().includes(search) ||
           item.original_filename.toLowerCase().includes(search);
-        return matchesFilter && matchesSearch;
+        return matchesFilter && matchesFolder && matchesSearch;
       });
     },
     tableItems() {
@@ -267,8 +373,7 @@ export default {
         this.pluginsForItem(item).forEach((plugin) => {
           plugin_statuses[plugin.plugin] = plugin;
         });
-        const pathParts = item.original_path.split("/");
-        const folder_path = pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
+        const folder_path = this.folderPathForItem(item);
         const errors = [
           item.ingest_error,
           ...Object.values(plugin_statuses).map((plugin) => plugin.error),
@@ -280,6 +385,58 @@ export default {
           error_summary: errors.join(", "),
         };
       });
+    },
+    folderOptions() {
+      const folders = new Map();
+      this.tableSourceItems.forEach((item) => {
+        const folderPath = this.folderPathForItem(item);
+        folders.set(folderPath, (folders.get(folderPath) || 0) + 1);
+      });
+      return Array.from(folders.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([value, count]) => ({
+          value,
+          label: `${value || "Root"} (${count})`,
+        }));
+    },
+    tableSourceItems() {
+      return this.batch && this.batch.items ? this.batch.items : [];
+    },
+    selectedRows: {
+      get() {
+        const selected = new Set(this.selectedItemIds);
+        return this.tableItems.filter((item) => selected.has(item.id));
+      },
+      set(rows) {
+        this.selectedItemIds = rows.map((row) => row.id);
+      },
+    },
+    selectedItems() {
+      const selected = new Set(this.selectedItemIds);
+      return this.tableSourceItems.filter((item) => selected.has(item.id));
+    },
+    readySelectedItemIds() {
+      return this.selectedItems
+        .filter((item) => item.ingest_status === "READY" && item.video)
+        .map((item) => item.id);
+    },
+    filteredReadyItemIds() {
+      return this.tableItems
+        .filter((item) => item.ingest_status === "READY" && item.video)
+        .map((item) => item.id);
+    },
+    currentFolderReadyItemIds() {
+      if (!this.folderFilter) return [];
+      return this.tableSourceItems
+        .filter((item) => {
+          const folderPath = this.folderPathForItem(item);
+          return (
+            item.ingest_status === "READY" &&
+            item.video &&
+            (folderPath === this.folderFilter || folderPath.startsWith(`${this.folderFilter}/`))
+          );
+        })
+        .map((item) => item.id);
     },
     pluginColumns() {
       if (!this.batch || !this.batch.plugin_runs) return [];
@@ -314,6 +471,15 @@ export default {
       if (!this.batch || !this.batch.items) return [];
       return this.batch.items.filter((item) => item.ingest_status === "ERROR");
     },
+    hasReadyVideos() {
+      return Boolean(
+        this.batch &&
+          this.batch.items &&
+          this.batch.items.some(
+            (item) => item.ingest_status === "READY" && item.video
+          )
+      );
+    },
     statusSummaries() {
       const itemStatuses = ["PENDING", "INGESTING", "READY", "ERROR"];
       const pluginStatuses = ["PENDING", "RUNNING", "DONE", "ERROR", "SKIPPED"];
@@ -343,6 +509,61 @@ export default {
     fetchBatch() {
       this.videoBatchStore.fetch(this.batchId);
     },
+    folderPathForItem(item) {
+      const pathParts = (item.original_path || "").split("/");
+      return pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
+    },
+    folderItems(group) {
+      return this.tableItems.filter((item) => item.folder_path === (group || ""));
+    },
+    folderSelectionState(group) {
+      const items = this.folderItems(group);
+      const ids = new Set(this.selectedItemIds);
+      const selectedCount = items.filter((item) => ids.has(item.id)).length;
+      return {
+        all: items.length > 0 && selectedCount === items.length,
+        some: selectedCount > 0 && selectedCount < items.length,
+      };
+    },
+    toggleFolderSelection(group) {
+      const items = this.folderItems(group);
+      const state = this.folderSelectionState(group);
+      const ids = new Set(this.selectedItemIds);
+      items.forEach((item) => {
+        if (state.all) {
+          ids.delete(item.id);
+        } else {
+          ids.add(item.id);
+        }
+      });
+      this.selectedItemIds = Array.from(ids);
+    },
+    selectVisible() {
+      const ids = new Set(this.selectedItemIds);
+      this.tableItems.forEach((item) => ids.add(item.id));
+      this.selectedItemIds = Array.from(ids);
+    },
+    invertVisibleSelection() {
+      const ids = new Set(this.selectedItemIds);
+      this.tableItems.forEach((item) => {
+        if (ids.has(item.id)) ids.delete(item.id);
+        else ids.add(item.id);
+      });
+      this.selectedItemIds = Array.from(ids);
+    },
+    selectCurrentFolder() {
+      const ids = new Set(this.selectedItemIds);
+      this.tableSourceItems
+        .filter((item) => {
+          const folderPath = this.folderPathForItem(item);
+          return folderPath === this.folderFilter || folderPath.startsWith(`${this.folderFilter}/`);
+        })
+        .forEach((item) => ids.add(item.id));
+      this.selectedItemIds = Array.from(ids);
+    },
+    clearSelection() {
+      this.selectedItemIds = [];
+    },
     pluginsForItem(item) {
       if (!this.batch || !this.batch.plugin_runs) return [];
       return this.batch.plugin_runs.filter((plugin) => plugin.item_id === item.id);
@@ -362,8 +583,23 @@ export default {
     },
     async runPreset() {
       this.confirmRunPreset = false;
-      await this.videoBatchStore.runPreset({ batchId: this.batchId });
+      await this.videoBatchStore.runScopedPreset({
+        batchId: this.batchId,
+        scope: this.scopeForPresetRun(),
+      });
       this.fetchBatch();
+    },
+    scopeForPresetRun() {
+      if (this.presetScopeMode === "selected") {
+        return { type: "item_ids", item_ids: this.readySelectedItemIds };
+      }
+      if (this.presetScopeMode === "folder") {
+        return { type: "item_ids", item_ids: this.currentFolderReadyItemIds };
+      }
+      if (this.presetScopeMode === "filtered") {
+        return { type: "item_ids", item_ids: this.filteredReadyItemIds };
+      }
+      return { type: "all" };
     },
     async retryFailed() {
       await this.videoBatchStore.retryFailed(this.batchId);
@@ -372,6 +608,14 @@ export default {
     async retryPluginSteps() {
       await this.videoBatchStore.retryFailedPluginSteps(this.batchId);
       this.fetchBatch();
+    },
+    async exportElan() {
+      this.exportError = "";
+      try {
+        await this.videoBatchStore.exportElan(this.batchId, this.batch.name);
+      } catch (error) {
+        this.exportError = "The ELAN batch export could not be created.";
+      }
     },
     async cancelBatch() {
       this.confirmCancel = false;
@@ -384,12 +628,40 @@ export default {
       this.$router.push({ path: "/batches" });
     },
     openSelectedVideos() {
-      const firstVideo = this.selected.find((item) => item.video);
+      const firstVideo = this.selectedItems.find((item) => item.video);
       if (firstVideo) {
         this.$router.push({ path: `/videoanalysis/${firstVideo.video.id}` });
       }
     },
+    openCustomPluginSetForAll() {
+      this.customPluginItemIds = this.tableSourceItems
+        .filter((item) => item.ingest_status === "READY" && item.video)
+        .map((item) => item.id);
+      this.customPluginScopeLabel = "all ready videos";
+      this.showCustomPluginSet = true;
+    },
+    openCustomPluginSetForSelection() {
+      this.customPluginItemIds = this.readySelectedItemIds;
+      this.customPluginScopeLabel = "selected ready videos";
+      this.showCustomPluginSet = true;
+    },
+    openCustomPluginSetForFolder(group) {
+      const folder = group || "";
+      this.customPluginItemIds = this.tableSourceItems
+        .filter((item) => {
+          const folderPath = this.folderPathForItem(item);
+          return (
+            item.ingest_status === "READY" &&
+            item.video &&
+            (folderPath === folder || (folder && folderPath.startsWith(`${folder}/`)))
+          );
+        })
+        .map((item) => item.id);
+      this.customPluginScopeLabel = folder ? `folder ${folder} and subfolders` : "root folder";
+      this.showCustomPluginSet = true;
+    },
   },
+  components: { ModalBatchPluginSet },
 };
 </script>
 
@@ -406,8 +678,20 @@ export default {
 
 .folder-row {
   background: #f5f5f5;
-  cursor: pointer;
   font-weight: 600;
+}
+
+.folder-checkbox {
+  display: inline-flex;
+  margin: 0 8px 0 0;
+  vertical-align: middle;
+}
+
+.folder-label {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  margin-right: 8px;
 }
 
 .selection-toolbar {

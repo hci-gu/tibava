@@ -1,86 +1,157 @@
-# Batch Video Workflow Implementation Plan
+# Run Any Plugin In Batch Implementation Plan
 
 ## Goal
 
-Support batch uploads of hundreds of videos, preserve useful folder context after upload, and run a predefined plugin subset automatically with predictable progress, retry, cancellation, and operational limits.
+Allow users to run any plugin in a video batch when that plugin has an explicit, validated batch execution strategy. The batch flow must support selected videos, folders, filtered subsets, shared parameters, plugin dependencies, per-video timeline resolution, clear validation errors, and partial skips without creating large failed jobs.
 
-## Current Baseline
+## 1. Plugin Metadata And Catalog
 
-- Single-video upload and plugin execution are working well enough for normal use.
-- Batch upload API support exists for multi-file uploads and zip uploads.
-- Zip uploads preserve relative folder paths.
-- Batch list/detail views exist and include status summaries, grouped rows, plugin columns, pagination, selection, retry, run, cancel, and delete actions.
-- Code-defined presets exist for `thumbnail`, `shotdetection`, and `shot_type_classification`.
-- Batch ingest and preset execution are covered by Django tests.
-- Repeated analyser video uploads are now cached per `Video` when the media identity is unchanged.
+- [x] Create a shared plugin catalog module used by both single-video and batch plugin UIs.
+- [x] Move plugin name, group, icon, description, required parameters, and optional parameters out of `ModalPlugin.vue`.
+- [x] Add batch-specific metadata for each plugin.
+- [x] Add `batch_supported` to indicate whether a plugin can currently run in batch mode.
+- [x] Add `batch_unsupported_reason` for plugins that should appear disabled.
+- [x] Add default batch-safe parameter values where applicable.
+- [x] Add metadata for expected plugin output types.
+- [x] Add metadata for whether duplicate runs of the same plugin are allowed.
+- [x] Add metadata for whether file inputs are allowed, shared, or unsupported in batch mode.
 
-## 1. Browser-Verified Batch Upload UX
+## 2. Batch Compatibility Classification
 
-- [x] Run a browser smoke test for the batch list and batch detail pages.
-- [x] Confirm the seeded batch `3088719230d94c0fa6bc8623ca353a98` renders with 7 ready videos.
-- [x] Confirm folder/path values render correctly in the batch detail table.
-- [x] Confirm each copied video opens from the batch detail table into the existing video analysis view.
-- [x] Upload multiple loose video files through the batch upload modal.
-- [x] Confirm loose-file batch uploads preserve the frontend-provided display paths where available.
-- [x] Upload a nested zip through the batch upload modal.
-- [x] Confirm zip folder grouping works in the UI for nested paths.
-- [x] Fix any browser-only layout, routing, or API shape issues found during the smoke test.
+- [x] Audit every plugin currently exposed in the single-video plugin modal.
+- [x] Classify plugins that are batch-safe with no special handling.
+- [x] Classify plugins that are batch-safe with shared default parameters.
+- [x] Classify plugins that are batch-safe only when an earlier step provides an output dependency.
+- [x] Classify plugins that need timeline-by-name or scalar-timeline-by-name mapping per video.
+- [x] Classify plugins that need shared uploaded inputs, such as query images.
+- [x] Classify plugins that are not batch-safe yet.
+- [x] Document the compatibility status and reason for every plugin.
 
-## 2. Automatic Preset Execution
+## 3. Parameter Strategy Support
 
-- [x] Add an option to run a selected preset automatically after batch ingest completes.
-- [x] Persist the selected preset on the batch at upload time.
-- [x] Start preset execution only after all ingestable files have reached a terminal ingest state.
-- [x] Make partially failed ingest batches eligible to run presets for successfully ingested videos.
-- [x] Show the selected preset and auto-run state in the batch detail header.
-- [x] Add tests for upload-with-preset and auto-run-after-ingest behavior.
+- [x] Support shared batch values for text fields.
+- [x] Support shared batch values for sliders.
+- [x] Support shared batch values for select options.
+- [x] Support shared batch values for button groups.
+- [x] Support shared uploaded file parameters where the backend can safely reuse one input for every video.
+- [x] Add explicit unsupported handling for file inputs that cannot be reused safely.
+- [x] Support `select_timeline` parameters from previous plugin-step outputs.
+- [x] Support `select_timeline` parameters by matching timeline name per video.
+- [x] Support `select_scalar_timeline` parameters by matching scalar timeline name per video.
+- [x] Support multi-timeline parameters where each selected timeline can be mapped per video.
+- [x] Add plugin-specific parameter adapters only where generic handling is not sufficient.
 
-## 3. Explicit Batch Scheduler
+## 4. Backend Custom Preset Format
 
-- [x] Replace the current simple sequential preset runner with an explicit scheduler loop.
-- [x] Add configurable per-batch plugin parallelism.
-- [x] Add configurable global analyser backpressure so one large batch cannot consume all worker capacity.
-- [x] Add per-user active batch limits that account for ingest and plugin execution.
-- [x] Ensure retry jobs enter the same scheduler path as initial jobs.
-- [x] Make scheduler state recover cleanly after backend, Celery, or analyser restarts.
-- [x] Add tests for scheduler ordering, limits, retries, and restart recovery.
+- [x] Extend the custom plugin-set payload to support parameter resolution strategies.
+- [x] Add `previous_step_output` resolution for dependency parameters.
+- [x] Add `timeline_by_name` resolution for timeline parameters.
+- [x] Add `scalar_timeline_by_name` resolution for scalar timeline parameters.
+- [x] Add `shared_file` resolution for reusable uploaded input parameters.
+- [x] Preserve the current simple `parameters` and `dependencies` shape for existing batch-safe plugins.
+- [x] Generate stable custom preset ids from the complete normalized custom preset definition.
+- [x] Ensure custom preset definitions can be passed through Celery scheduler retries and continuations.
 
-## 4. Cancellation, Deletion, And Edge Cases
+## 5. Backend Validation And Preflight
 
-- [x] Add cancellation behavior for already-started analyser plugin runs if the analyser exposes a supported cancel operation.
-- [x] Add clear handling for videos deleted while a batch is queued or running.
-- [x] Decide whether the known `thumbnail_generator` decode failure for `user-3/Tagesschau-oil.mp4` should be fixed, skipped, or documented as an analyser limitation.
-- [x] Add user-facing error messages for skipped/deleted/cancelled plugin work.
-- [x] Add regression tests for deleted-video and mid-plugin-cancel behavior.
+- [x] Add `GET /api/video/batch/plugin-catalog`.
+- [x] Add `POST /api/video/batch/validate-plugin-set`.
+- [x] Validate that every requested plugin exists.
+- [x] Validate that every requested plugin is batch-supported.
+- [x] Validate required shared parameters before scheduling.
+- [x] Validate parser compatibility after resolving default and shared parameter values.
+- [x] Validate dependency graph ordering and reject cycles.
+- [x] Validate that previous-step output references point to earlier steps.
+- [x] Validate selected batch scope has at least one ready video.
+- [x] Preflight per-video timeline and scalar timeline mappings.
+- [x] Return a summary of runnable videos, skipped videos, skipped reasons, and total jobs.
+- [x] Keep `POST /api/video/batch/run-plugin-set` aligned with the validation endpoint.
 
-## 5. Preset Management
+## 6. Scheduler And Execution Semantics
 
-- [x] Decide whether production preset editing should be code-configured, admin-managed, or user-managed.
-- [x] Record admin-managed preset models and APIs as intentionally out of scope for this rollout.
-- [x] If code-configured, add deployment documentation for changing preset definitions safely.
-- [x] Validate preset dependencies before a preset can be saved or exposed.
-- [x] Add tests for invalid preset definitions and dependency cycles.
+- [x] Resolve batch parameters per `VideoBatchItem` immediately before dispatch.
+- [x] Skip only affected videos when per-video inputs are missing.
+- [x] Continue running valid videos when other videos are skipped.
+- [x] Store clear skip/error reasons on `VideoBatchPluginRun`.
+- [x] Support `missing_required_timeline` as a plugin-step skip reason.
+- [x] Support `missing_dependency_output` as a plugin-step skip reason.
+- [x] Support `unsupported_batch_parameter` as a validation error.
+- [x] Support `invalid_parameters` as a validation or plugin-step error.
+- [x] Support `shared_input_missing` as a validation error.
+- [x] Support `plugin_not_batch_supported` as a validation error.
+- [x] Keep retry behavior compatible with scoped custom plugin sets.
+- [x] Keep cancellation behavior compatible with scoped custom plugin sets.
+- [x] Keep startup recovery compatible with custom plugin-set scheduler tasks.
 
-## 6. Docker Smoke Tests
+## 7. Batch Custom Plugin Set UI
 
-- [x] Add a scripted Docker smoke test for full upload-to-ingest behavior.
-- [x] Add a scripted Docker smoke test for preset execution against the analyser.
-- [x] Include login using `test@email.com` / `password123`.
-- [x] Include loose multi-file upload, nested zip upload, preset run, retry failed work, cancel running batch, and delete batch.
-- [x] Document expected smoke-test runtime and required local services.
+- [x] Replace the temporary three-plugin list with the shared plugin catalog.
+- [x] Render plugins grouped by category.
+- [x] Add plugin search.
+- [x] Show unsupported plugins disabled with their unsupported reason.
+- [x] Allow adding supported plugins to a selected step sequence.
+- [x] Allow removing plugins from the sequence.
+- [x] Allow reordering plugins in the sequence.
+- [x] Show dependency warnings while ordering plugins.
+- [x] Show parameter editors for each selected step.
+- [x] Show timeline dependency selectors for plugins that need prior outputs.
+- [x] Show timeline-by-name selectors for plugins that need existing timelines.
+- [x] Show shared file inputs only for plugins that support shared files in batch mode.
+- [x] Disable final run until validation passes.
+- [x] Show validation/preflight results before running.
+- [x] Show selected scope summary before running.
+- [x] Show estimated job count before running.
 
-## 7. Performance And Observability
+## 8. Batch Scope UI
 
-- [x] Measure baseline preset runtime for the seeded batch before relying on analyser upload caching.
-- [x] Measure preset runtime after analyser upload caching.
-- [x] Add structured logs or metrics for batch ingest duration, queue wait time, plugin runtime, retry count, and cache hit/miss counts.
-- [x] Add a compact operational dashboard or admin view for stuck/running batches if needed.
-- [x] Define alert thresholds for batches stuck in ingesting/running states.
+- [x] Keep support for running on all ready videos.
+- [x] Keep support for running on manually selected videos.
+- [x] Keep support for running on the current folder.
+- [x] Keep support for running on current folder and subfolders.
+- [x] Keep support for running on filtered results.
+- [x] Include skipped video counts in the run confirmation.
+- [x] Include plugin-step count and total job count in the run confirmation.
 
-## 8. Rollout Readiness
+## 9. Plugin Rollout Order
 
-- [x] Decide whether to keep or remove the seeded test account before production deployment.
-- [x] Add release QA instructions that cover browser UI, API, worker restart recovery, and analyser availability.
-- [x] Document recommended limits for maximum files per batch, maximum zip size, and concurrent active batches.
-- [x] Add migration/rollback notes for the analyser cache fields and any scheduler fields.
-- [x] Run the full backend test suite, frontend build, Docker smoke scripts, and browser smoke test before release.
+- [x] Enable all simple shared-parameter plugins first.
+- [x] Enable dependency-based plugins after previous-step output resolution is generalized.
+- [x] Enable timeline-by-name plugins after per-video preflight is in place.
+- [x] Enable scalar-timeline-by-name plugins after scalar mapping is in place.
+- [x] Enable shared-file plugins after upload/reuse handling is implemented.
+- [x] Leave plugins disabled until their batch adapter and validation strategy are explicit.
+
+## 10. Tests
+
+- [x] Add backend tests for catalog endpoint output.
+- [x] Add backend tests for validation endpoint success with simple shared-parameter plugins.
+- [x] Add backend tests for unsupported plugin rejection.
+- [x] Add backend tests for missing required parameter rejection.
+- [x] Add backend tests for dependency cycle rejection.
+- [x] Add backend tests for previous-step output dependency resolution.
+- [x] Add backend tests for timeline-by-name resolution.
+- [x] Add backend tests for missing timeline per-video skips.
+- [x] Add backend tests for shared file parameter handling.
+- [x] Add backend tests for selected-video scoped custom runs.
+- [x] Add backend tests for folder-scoped custom runs.
+- [x] Add backend tests for retrying scoped custom runs.
+- [x] Add frontend build verification.
+- [x] Add browser smoke for plugin catalog rendering.
+- [x] Add browser smoke for disabled unsupported plugins.
+- [x] Add browser smoke for adding, removing, and reordering plugin steps.
+- [x] Add browser smoke for validation summary display.
+- [x] Add browser smoke for selected-video custom run.
+- [x] Add browser smoke for folder custom run.
+
+## 11. Documentation And Release Readiness
+
+- [x] Document the batch plugin metadata schema.
+- [x] Document how to mark a plugin batch-supported.
+- [x] Document parameter resolution strategies.
+- [x] Document known unsupported plugin categories.
+- [x] Document operator expectations for partial skips.
+- [x] Run backend compile.
+- [x] Run full backend tests.
+- [x] Run frontend build.
+- [x] Run Docker API smoke.
+- [x] Run browser smoke for batch upload, selection, folder runs, custom plugin sets, and batch deletion.

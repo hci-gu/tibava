@@ -2,11 +2,12 @@ import json
 import logging
 import traceback
 import logging
-import sys
 import io
 import csv
 import base64
+import mimetypes
 from dataclasses import dataclass
+from contextlib import redirect_stdout
 
 from typing import List, Tuple
 
@@ -28,6 +29,7 @@ from backend.models import (
     TimelineSegment,
     PluginRunResult,
     PluginRun,
+    VideoAnalysisState,
 )
 from enum import Enum
 from data import DataManager, Shot
@@ -35,6 +37,46 @@ import numpy as np
 
 
 logger = logging.getLogger(__name__)
+
+
+class ElanExportError(Exception):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def resolve_elan_shot_timeline(video_db):
+    state = VideoAnalysisState.objects.filter(video=video_db).select_related(
+        "selected_shots"
+    ).first()
+    if (
+        state
+        and state.selected_shots
+        and state.selected_shots.video_id == video_db.id
+        and state.selected_shots.type == Timeline.TYPE_ANNOTATION
+    ):
+        return state.selected_shots
+
+    timeline = Timeline.objects.filter(
+        video=video_db,
+        type=Timeline.TYPE_ANNOTATION,
+        plugin_run_result__type=PluginRunResult.TYPE_SHOTS,
+    ).first()
+    if timeline:
+        return timeline
+
+    timeline = Timeline.objects.filter(
+        video=video_db,
+        type=Timeline.TYPE_ANNOTATION,
+        name__iexact="Shots",
+    ).first()
+    if timeline:
+        return timeline
+
+    return Timeline.objects.filter(
+        video=video_db,
+        type=Timeline.TYPE_ANNOTATION,
+    ).first()
 
 
 def json_to_csv(json_obj):
@@ -712,24 +754,33 @@ class VideoExport(View):
 
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-    def export_elan(self, parameters, video_db):
+    def export_elan(self, parameters, video_db, linked_file_path=None):
         eaf = Eaf(author="")
         eaf.remove_tier("default")
-        eaf.add_linked_file(file_path=f"{video_db.id.hex}.mp4", mimetype="video/mp4")
+        linked_file_path = linked_file_path or f"{video_db.id.hex}{video_db.ext}"
+        mimetype = mimetypes.guess_type(linked_file_path)[0] or "video/mp4"
+        eaf.add_linked_file(file_path=linked_file_path, mimetype=mimetype)
 
         # get the boundary information from the timeline selected in parameters
-        try:
-            shot_timeline_db = Timeline.objects.get(
-                id=parameters.get("shot_timeline_id")
-            )
-        except Timeline.DoesNotExist:
-            raise Exception
+        shot_timeline_id = parameters.get("shot_timeline_id")
+        if shot_timeline_id:
+            shot_timeline_db = Timeline.objects.filter(
+                id=shot_timeline_id, video=video_db
+            ).first()
+        else:
+            shot_timeline_db = resolve_elan_shot_timeline(video_db)
+        if shot_timeline_db is None:
+            raise ElanExportError("missing_shot_timeline")
 
-        aggregation = ["max", "min", "mean"][parameters.get("aggregation")]
+        aggregation_index = parameters.get("aggregation", 0)
+        try:
+            aggregation = ["max", "min", "mean"][int(aggregation_index)]
+        except (IndexError, TypeError, ValueError):
+            raise ElanExportError("invalid_aggregation")
 
         # if the timeline is not of type annotation, raise an Exception
         if shot_timeline_db.type != Timeline.TYPE_ANNOTATION:
-            raise Exception
+            raise ElanExportError("invalid_shot_timeline")
 
         # get the shots from the boundary timeline
         shots = []
@@ -830,10 +881,9 @@ class VideoExport(View):
                             tier, start=start_time, end=end_time, value=f"value:{id}"
                         )
 
-        stdout = sys.stdout
-        sys.stdout = str_out = StringIO()
-        to_eaf(file_path="-", eaf_obj=eaf)
-        sys.stdout = stdout
+        str_out = StringIO()
+        with redirect_stdout(str_out):
+            to_eaf(file_path="-", eaf_obj=eaf)
         result = str_out.getvalue()
 
         return result

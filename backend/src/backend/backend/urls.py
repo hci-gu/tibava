@@ -12,8 +12,18 @@ urlpatterns = [
     #
     path("video/upload", views.VideoUpload.as_view(), name="video_upload"),
     path("video/batch/upload", views.VideoBatchUpload.as_view(), name="video_batch_upload"),
+    path(
+        "video/batch/shared-input/upload",
+        views.VideoBatchSharedInputUpload.as_view(),
+        name="video_batch_shared_input_upload",
+    ),
     path("video/batch/list", views.VideoBatchList.as_view(), name="video_batch_list"),
     path("video/batch/get", views.VideoBatchGet.as_view(), name="video_batch_get"),
+    path(
+        "video/batch/export-elan",
+        views.VideoBatchExportElan.as_view(),
+        name="video_batch_export_elan",
+    ),
     path(
         "video/batch/retry-failed",
         views.VideoBatchRetryFailed.as_view(),
@@ -27,9 +37,24 @@ urlpatterns = [
         name="video_batch_presets",
     ),
     path(
+        "video/batch/plugin-catalog",
+        views.VideoBatchPluginCatalog.as_view(),
+        name="video_batch_plugin_catalog",
+    ),
+    path(
+        "video/batch/validate-plugin-set",
+        views.VideoBatchValidatePluginSet.as_view(),
+        name="video_batch_validate_plugin_set",
+    ),
+    path(
         "video/batch/run-preset",
         views.VideoBatchRunPreset.as_view(),
         name="video_batch_run_preset",
+    ),
+    path(
+        "video/batch/run-plugin-set",
+        views.VideoBatchRunPluginSet.as_view(),
+        name="video_batch_run_plugin_set",
     ),
     path(
         "video/batch/retry-failed-plugin-steps",
