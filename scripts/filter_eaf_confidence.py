@@ -29,6 +29,8 @@ VALUE_PREFIXES_TO_STRIP = (
 SHOT_SEGMENT_TIER_ID = "Shots"
 SHOT_BOUNDARY_SOURCE_TIER_ID = "Shot"
 PLAIN_NUMERIC_VALUE_TIER_IDS = (SHOT_SEGMENT_TIER_ID, "Audio RMS")
+MERGED_TRANSCRIPT_TIER_ID = "Transcript"
+CONSOLIDATED_OCR_TIER_ID = "OCR"
 
 _XSI_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"
 _NUMBER_RE = re.compile(
@@ -73,6 +75,9 @@ class FilterResult:
     removed_time_slots: int = 0
     stripped_value_prefixes: int = 0
     created_shot_segments: int = 0
+    transcript_chunks_combined: int = 0
+    original_ocr_annotations: int = 0
+    consolidated_ocr_windows: int = 0
 
 
 def _local_name(tag: object) -> str:
@@ -576,6 +581,114 @@ def _populate_shot_segment_tier(
     return len(unique_records)
 
 
+def _merge_regular_transcript(
+    root: ET.Element,
+    time_values: dict[str, int],
+    warnings: list[str],
+) -> int:
+    transcript_tier = next(
+        (
+            tier
+            for tier in _children(root, "TIER")
+            if tier.get("TIER_ID") == MERGED_TRANSCRIPT_TIER_ID
+        ),
+        None,
+    )
+    if transcript_tier is None:
+        return 0
+
+    transcript_info = _tier_info(transcript_tier, time_values)
+    if not transcript_info.records:
+        return 0
+    if not transcript_info.contains_only_alignable_annotations:
+        warnings.append(
+            f"Tier {MERGED_TRANSCRIPT_TIER_ID!r} contains unsupported reference "
+            "annotations and was not combined."
+        )
+        return 0
+
+    ordered_records = sorted(
+        transcript_info.records,
+        key=lambda record: (record.interval[0], record.interval[1]),
+    )
+    chunks: list[str] = []
+    for record in ordered_records:
+        value = record.value.strip()
+        if value.startswith("Transcript:"):
+            value = value[len("Transcript:") :].lstrip()
+        if value:
+            chunks.append(value)
+
+    clip_start = min(time_values.values())
+    clip_end = max(time_values.values())
+    if clip_start >= clip_end:
+        raise EafFilterError("Cannot determine a positive full-clip transcript interval.")
+    start_ref = next(
+        slot_id for slot_id, time_value in time_values.items() if time_value == clip_start
+    )
+    end_ref = next(
+        slot_id for slot_id, time_value in time_values.items() if time_value == clip_end
+    )
+
+    retained = ordered_records[0]
+    for record in transcript_info.records:
+        transcript_tier.remove(record.wrapper)
+    transcript_tier.append(retained.wrapper)
+    retained.annotation.set("TIME_SLOT_REF1", start_ref)
+    retained.annotation.set("TIME_SLOT_REF2", end_ref)
+    value_element = _children(retained.annotation, "ANNOTATION_VALUE")[0]
+    value_element.text = " ".join(chunks)
+    return len(ordered_records)
+
+
+def _consolidate_ocr_windows(
+    root: ET.Element,
+    time_values: dict[str, int],
+    warnings: list[str],
+) -> tuple[int, int]:
+    ocr_tier = next(
+        (
+            tier
+            for tier in _children(root, "TIER")
+            if tier.get("TIER_ID") == CONSOLIDATED_OCR_TIER_ID
+        ),
+        None,
+    )
+    if ocr_tier is None:
+        return 0, 0
+
+    ocr_info = _tier_info(ocr_tier, time_values)
+    if not ocr_info.records:
+        return 0, 0
+    if not ocr_info.contains_only_alignable_annotations:
+        warnings.append(
+            f"Tier {CONSOLIDATED_OCR_TIER_ID!r} contains unsupported reference "
+            "annotations and was not consolidated."
+        )
+        return len(ocr_info.records), len(ocr_info.records)
+
+    records_by_interval: dict[tuple[int, int], list[AnnotationRecord]] = defaultdict(list)
+    for record in ocr_info.records:
+        records_by_interval[record.interval].append(record)
+
+    retained_records: list[AnnotationRecord] = []
+    for interval in sorted(records_by_interval):
+        records = records_by_interval[interval]
+        retained = records[0]
+        combined_value = " ".join(
+            record.value.strip() for record in records if record.value.strip()
+        )
+        _children(retained.annotation, "ANNOTATION_VALUE")[0].text = combined_value
+        retained_records.append(retained)
+
+    for record in ocr_info.records:
+        ocr_tier.remove(record.wrapper)
+    for record in retained_records:
+        ocr_tier.append(record.wrapper)
+
+    return len(ocr_info.records), len(retained_records)
+
+
 def filter_tree(tree: ET.ElementTree, threshold: float) -> FilterResult:
     if not 0.0 <= threshold <= 1.0 or not math.isfinite(threshold):
         raise EafFilterError("The confidence threshold must be between 0 and 1.")
@@ -619,16 +732,23 @@ def filter_tree(tree: ET.ElementTree, threshold: float) -> FilterResult:
                 f"Numeric tier {info.tier_id!r} was not part of a verified group; preserved."
             )
 
-    _validate_remaining_references(root)
-    result.removed_time_slots = _remove_newly_orphaned_time_slots(
-        root, time_order, initially_referenced
+    result.transcript_chunks_combined = _merge_regular_transcript(
+        root, time_values, result.warnings
     )
     result.stripped_value_prefixes = _strip_configured_value_prefixes(root)
+    (
+        result.original_ocr_annotations,
+        result.consolidated_ocr_windows,
+    ) = _consolidate_ocr_windows(root, time_values, result.warnings)
     result.created_shot_segments = _populate_shot_segment_tier(
         root, time_values, result.warnings
     )
     result.stripped_value_prefixes += _strip_value_prefix_from_numeric_display_tiers(
         root
+    )
+    _validate_remaining_references(root)
+    result.removed_time_slots = _remove_newly_orphaned_time_slots(
+        root, time_order, initially_referenced
     )
     return result
 
@@ -753,6 +873,12 @@ def _print_result(result: FilterResult, threshold: float) -> None:
     print(f"Removed time slots: {result.removed_time_slots}")
     print(f"Stripped value prefixes: {result.stripped_value_prefixes}")
     print(f"Created shot segments: {result.created_shot_segments}")
+    print(f"Transcript chunks combined: {result.transcript_chunks_combined}")
+    if result.original_ocr_annotations:
+        print(
+            f"OCR annotations consolidated: {result.original_ocr_annotations} -> "
+            f"{result.consolidated_ocr_windows} windows"
+        )
     print(f"Output: {result.output_path}")
 
 

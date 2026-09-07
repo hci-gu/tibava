@@ -81,6 +81,83 @@ class ConfidenceParsingTests(unittest.TestCase):
 
 
 class FilteringTests(unittest.TestCase):
+    def test_ocr_results_are_concatenated_once_per_time_window(self) -> None:
+        tree = (
+            EafFixture()
+            .add_tier(
+                "OCR",
+                [
+                    (500, 1000, "Transcript:third"),
+                    (0, 500, "Transcript:first"),
+                    (0, 500, "Transcript:second"),
+                    (0, 500, "Transcript:second"),
+                ],
+            )
+            .tree()
+        )
+
+        result = filterer.filter_tree(tree, 0.5)
+
+        self.assertEqual(
+            tier_values(tree, "OCR"),
+            ["first second second", "third"],
+        )
+        self.assertEqual(result.original_ocr_annotations, 4)
+        self.assertEqual(result.consolidated_ocr_windows, 2)
+        intervals = []
+        slots = {
+            slot.get("TIME_SLOT_ID"): int(slot.get("TIME_VALUE", "0"))
+            for slot in tree.getroot().findall("./TIME_ORDER/TIME_SLOT")
+        }
+        for annotation in tree.getroot().findall(
+            "./TIER[@TIER_ID='OCR']/ANNOTATION/ALIGNABLE_ANNOTATION"
+        ):
+            intervals.append(
+                (
+                    slots[annotation.get("TIME_SLOT_REF1")],
+                    slots[annotation.get("TIME_SLOT_REF2")],
+                )
+            )
+        self.assertEqual(intervals, [(0, 500), (500, 1000)])
+
+    def test_regular_transcript_is_combined_across_the_full_clip(self) -> None:
+        tree = (
+            EafFixture()
+            .add_tier(
+                "Transcript",
+                [
+                    (300, 400, "Transcript:second chunk"),
+                    (100, 200, "Transcript:first chunk"),
+                ],
+            )
+            .add_tier("SPEAKER_01", [(100, 200, "Transcript:speaker text")])
+            .add_tier("Clip Bounds", [(0, 500, "present")])
+            .tree()
+        )
+
+        result = filterer.filter_tree(tree, 0.5)
+
+        self.assertEqual(
+            tier_values(tree, "Transcript"), ["first chunk second chunk"]
+        )
+        self.assertEqual(tier_values(tree, "SPEAKER_01"), ["speaker text"])
+        transcript = tree.getroot().find(
+            "./TIER[@TIER_ID='Transcript']/ANNOTATION/ALIGNABLE_ANNOTATION"
+        )
+        self.assertIsNotNone(transcript)
+        slots = {
+            slot.get("TIME_SLOT_ID"): int(slot.get("TIME_VALUE", "0"))
+            for slot in tree.getroot().findall("./TIME_ORDER/TIME_SLOT")
+        }
+        self.assertEqual(
+            (
+                slots[transcript.get("TIME_SLOT_REF1")],
+                slots[transcript.get("TIME_SLOT_REF2")],
+            ),
+            (0, 500),
+        )
+        self.assertEqual(result.transcript_chunks_combined, 2)
+
     def test_empty_shots_tier_is_populated_from_shot_boundaries(self) -> None:
         tree = (
             EafFixture()
