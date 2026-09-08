@@ -24,6 +24,8 @@ from backend.utils.task import Task
 from django.db import transaction
 from django.conf import settings
 
+from .cluster_to_scalar import create_cluster_scalar_timelines
+
 
 @PluginManager.export_parser("face_clustering")
 class FaceClusteringParser(Parser):
@@ -205,6 +207,7 @@ class FaceClustering(Task):
             logging.warning("dry_run or plugin_run is None")
             return {}
 
+        cluster_timeline_items = []
         with transaction.atomic():
             with cluster_filter_result[1]["clusters"] as data:
                 # save cluster results
@@ -245,6 +248,7 @@ class FaceClustering(Task):
                         plugin_run=plugin_run,
                         type=ClusterTimelineItem.TYPE_FACE,
                     )
+                    cluster_timeline_items.append(cluster_timeline_item_db)
 
                     # create a face db item for every detected face
                     for face_index, embedding_id in enumerate(cluster.embedding_ids):
@@ -278,17 +282,29 @@ class FaceClustering(Task):
                 video_analysis_state_db.selected_face_clustering = plugin_run
                 video_analysis_state_db.save()
 
-                return {
-                    "plugin_run": plugin_run.id.hex,
-                    "plugin_run_results": [
-                        plugin_run_result_db.id.hex,
-                        plugin_run_result_faces_db.id.hex,
-                        plugin_run_result_images_db.id.hex,
-                        plugin_run_result_features_db.id.hex,
-                    ],
-                    "timelines": {},
-                    "data": {"clusters": cluster_filter_result[1]["clusters"].id},
-                }
+                plugin_run_results = [
+                    plugin_run_result_db.id.hex,
+                    plugin_run_result_faces_db.id.hex,
+                    plugin_run_result_images_db.id.hex,
+                    plugin_run_result_features_db.id.hex,
+                ]
+
+        scalar_timelines = create_cluster_scalar_timelines(
+            cluster_timeline_items,
+            parent_name="Face Clustering",
+            fps=parameters.get("fps"),
+            video=video,
+            user=user,
+            plugin_run=plugin_run,
+        )
+        plugin_run_results.extend(scalar_timelines["plugin_run_results"])
+
+        return {
+            "plugin_run": plugin_run.id.hex,
+            "plugin_run_results": plugin_run_results,
+            "timelines": scalar_timelines["timelines"],
+            "data": {"clusters": cluster_filter_result[1]["clusters"].id},
+        }
 
     def get_results(self, analyse):
         try:
