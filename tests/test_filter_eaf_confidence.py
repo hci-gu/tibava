@@ -365,6 +365,22 @@ class FilteringTests(unittest.TestCase):
 
 
 class FileSafetyTests(unittest.TestCase):
+    def test_in_memory_filter_for_http_exports(self) -> None:
+        tree = (
+            EafFixture()
+            .add_tier("Main", [(0, 100, "Type:Keep")])
+            .add_tier("Keep", [(0, 100, "value:0.75")])
+            .tree()
+        )
+        source = ET.tostring(tree.getroot(), encoding="unicode")
+
+        filtered, result = filterer.filter_eaf_xml(source)
+
+        output_tree = ET.ElementTree(ET.fromstring(filtered))
+        self.assertEqual(tier_values(output_tree, "Main"), ["Type:Keep"])
+        self.assertEqual(len(output_tree.getroot().findall("TIER")), 1)
+        self.assertEqual(result.groups[0].main_tier, "Main")
+
     def test_malformed_xml_and_broken_reference_do_not_write_output(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory)
