@@ -19,18 +19,25 @@ from typing import Iterable, Sequence
 CONFIDENCE_THRESHOLD = 0.5
 VALUE_PREFIXES_TO_STRIP = (
     "Transcript:",
+    "Audio Gender Classification:",
     "Audio Gender:",
     "Emotion:",
     "Shot Size:",
     "Shot Scale:",
     "Shot Movement:",
+    "Speech Sentiment:",
     "Sentiment:",
 )
 SHOT_SEGMENT_TIER_ID = "Shots"
 SHOT_BOUNDARY_SOURCE_TIER_ID = "Shot"
-PLAIN_NUMERIC_VALUE_TIER_IDS = (SHOT_SEGMENT_TIER_ID, "Audio RMS")
-MERGED_TRANSCRIPT_TIER_ID = "Transcript"
+PLAIN_NUMERIC_VALUE_TIER_IDS = (
+    SHOT_SEGMENT_TIER_ID,
+    "Audio RMS",
+    "RMS Volume",
+)
+MERGED_TRANSCRIPT_TIER_IDS = ("Transcript", "Whisper Transcript")
 CONSOLIDATED_OCR_TIER_ID = "OCR"
+_CLUSTER_TIER_RE = re.compile(r"^Cluster\s+\d+$")
 
 _XSI_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"
 _NUMBER_RE = re.compile(
@@ -68,9 +75,20 @@ class GroupResult:
 
 
 @dataclass
+class ClusterGroupResult:
+    parent_tier: str
+    cluster_tiers: list[str]
+    retained_values: int = 0
+    filtered_values: int = 0
+    annotations_created: int = 0
+    warnings: int = 0
+
+
+@dataclass
 class FilterResult:
     output_path: Path | None
     groups: list[GroupResult] = field(default_factory=list)
+    cluster_groups: list[ClusterGroupResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     removed_time_slots: int = 0
     stripped_value_prefixes: int = 0
@@ -342,6 +360,48 @@ def discover_groups(
     return groups, score_tier_ids
 
 
+def discover_cluster_groups(
+    root: ET.Element, time_values: dict[str, int]
+) -> list[tuple[TierInfo, list[TierInfo]]]:
+    """Discover empty parent tiers followed by aligned ``Cluster N`` score tiers."""
+
+    tiers = [_tier_info(tier, time_values) for tier in _children(root, "TIER")]
+    groups: list[tuple[TierInfo, list[TierInfo]]] = []
+    index = 0
+    while index < len(tiers):
+        parent = tiers[index]
+        if parent.records or _children(parent.element, "ANNOTATION"):
+            index += 1
+            continue
+
+        candidates: list[TierInfo] = []
+        expected_intervals: set[tuple[int, int]] | None = None
+        cursor = index + 1
+        while cursor < len(tiers):
+            candidate = tiers[cursor]
+            intervals = {record.interval for record in candidate.records}
+            if (
+                not _CLUSTER_TIER_RE.fullmatch(candidate.tier_id)
+                or not candidate.records
+                or not candidate.contains_only_alignable_annotations
+                or not all(
+                    _looks_like_confidence(record.value) for record in candidate.records
+                )
+                or (expected_intervals is not None and intervals != expected_intervals)
+            ):
+                break
+            expected_intervals = intervals
+            candidates.append(candidate)
+            cursor += 1
+
+        if candidates:
+            groups.append((parent, candidates))
+            index = cursor
+        else:
+            index += 1
+    return groups
+
+
 def _select_score_tier(
     value: str, score_tiers: Sequence[TierInfo]
 ) -> tuple[TierInfo | None, str | None]:
@@ -424,6 +484,69 @@ def _filter_group(
         else:
             result.kept += 1
 
+    return result
+
+
+def _merge_cluster_group(
+    root: ET.Element,
+    parent: TierInfo,
+    cluster_tiers: Sequence[TierInfo],
+    threshold: float,
+    warnings: list[str],
+) -> ClusterGroupResult:
+    result = ClusterGroupResult(
+        parent_tier=parent.tier_id,
+        cluster_tiers=[tier.tier_id for tier in cluster_tiers],
+    )
+    retained_by_interval: dict[
+        tuple[int, int], list[tuple[str, AnnotationRecord]]
+    ] = defaultdict(list)
+
+    for tier in cluster_tiers:
+        records_by_interval: dict[tuple[int, int], list[AnnotationRecord]] = defaultdict(list)
+        for record in tier.records:
+            records_by_interval[record.interval].append(record)
+        for interval, records in records_by_interval.items():
+            if len(records) != 1:
+                result.warnings += 1
+                warnings.append(
+                    f"{parent.tier_id} {interval[0]}-{interval[1]} ms: "
+                    f"duplicated confidence in {tier.tier_id}; cluster skipped."
+                )
+                continue
+            try:
+                confidence = parse_confidence(records[0].value)
+            except ValueError as exc:
+                result.warnings += 1
+                warnings.append(
+                    f"{parent.tier_id} {interval[0]}-{interval[1]} ms: "
+                    f"invalid confidence in {tier.tier_id} ({exc}); cluster skipped."
+                )
+                continue
+            if confidence < threshold:
+                result.filtered_values += 1
+                continue
+            retained_by_interval[interval].append((tier.tier_id, records[0]))
+            result.retained_values += 1
+
+    annotation_ids = _next_annotation_id(root)
+    for interval in sorted(retained_by_interval):
+        retained = retained_by_interval[interval]
+        source_record = retained[0][1]
+        wrapper = ET.SubElement(parent.element, "ANNOTATION")
+        annotation = ET.SubElement(
+            wrapper,
+            "ALIGNABLE_ANNOTATION",
+            {
+                "ANNOTATION_ID": next(annotation_ids),
+                "TIME_SLOT_REF1": source_record.annotation.get("TIME_SLOT_REF1", ""),
+                "TIME_SLOT_REF2": source_record.annotation.get("TIME_SLOT_REF2", ""),
+            },
+        )
+        ET.SubElement(annotation, "ANNOTATION_VALUE").text = "; ".join(
+            tier_id for tier_id, _record in retained
+        )
+        result.annotations_created += 1
     return result
 
 
@@ -581,29 +704,19 @@ def _populate_shot_segment_tier(
     return len(unique_records)
 
 
-def _merge_regular_transcript(
-    root: ET.Element,
+def _merge_regular_transcript_tier(
+    transcript_tier: ET.Element,
+    tier_id: str,
     time_values: dict[str, int],
     warnings: list[str],
 ) -> int:
-    transcript_tier = next(
-        (
-            tier
-            for tier in _children(root, "TIER")
-            if tier.get("TIER_ID") == MERGED_TRANSCRIPT_TIER_ID
-        ),
-        None,
-    )
-    if transcript_tier is None:
-        return 0
-
     transcript_info = _tier_info(transcript_tier, time_values)
     if not transcript_info.records:
         return 0
     if not transcript_info.contains_only_alignable_annotations:
         warnings.append(
-            f"Tier {MERGED_TRANSCRIPT_TIER_ID!r} contains unsupported reference "
-            "annotations and was not combined."
+            f"Tier {tier_id!r} contains unsupported reference annotations and "
+            "was not combined."
         )
         return 0
 
@@ -639,6 +752,21 @@ def _merge_regular_transcript(
     value_element = _children(retained.annotation, "ANNOTATION_VALUE")[0]
     value_element.text = " ".join(chunks)
     return len(ordered_records)
+
+
+def _merge_regular_transcripts(
+    root: ET.Element,
+    time_values: dict[str, int],
+    warnings: list[str],
+) -> int:
+    combined = 0
+    for transcript_tier in _children(root, "TIER"):
+        tier_id = transcript_tier.get("TIER_ID", "")
+        if tier_id in MERGED_TRANSCRIPT_TIER_IDS:
+            combined += _merge_regular_transcript_tier(
+                transcript_tier, tier_id, time_values, warnings
+            )
+    return combined
 
 
 def _consolidate_ocr_windows(
@@ -695,6 +823,7 @@ def filter_tree(tree: ET.ElementTree, threshold: float) -> FilterResult:
 
     root, time_order, time_values, initially_referenced = _validate_and_index(tree)
     groups, score_tier_ids = discover_groups(root, time_values)
+    cluster_groups = discover_cluster_groups(root, time_values)
     result = FilterResult(output_path=None)
     score_tier_owners = {
         score_tier.tier_id: main.tier_id
@@ -713,8 +842,21 @@ def filter_tree(tree: ET.ElementTree, threshold: float) -> FilterResult:
             )
         )
 
+    cluster_score_tier_ids: set[str] = set()
+    for parent, cluster_tiers in cluster_groups:
+        result.cluster_groups.append(
+            _merge_cluster_group(
+                root,
+                parent,
+                cluster_tiers,
+                threshold,
+                result.warnings,
+            )
+        )
+        cluster_score_tier_ids.update(tier.tier_id for tier in cluster_tiers)
+
     for tier in list(_children(root, "TIER")):
-        if tier.get("TIER_ID") in score_tier_ids:
+        if tier.get("TIER_ID") in score_tier_ids | cluster_score_tier_ids:
             root.remove(tier)
 
     discovered_ids = {
@@ -732,7 +874,7 @@ def filter_tree(tree: ET.ElementTree, threshold: float) -> FilterResult:
                 f"Numeric tier {info.tier_id!r} was not part of a verified group; preserved."
             )
 
-    result.transcript_chunks_combined = _merge_regular_transcript(
+    result.transcript_chunks_combined = _merge_regular_transcripts(
         root, time_values, result.warnings
     )
     result.stripped_value_prefixes = _strip_configured_value_prefixes(root)
@@ -868,6 +1010,14 @@ def _print_result(result: FilterResult, threshold: float) -> None:
             )
     else:
         print("No verified confidence groups were discovered.")
+    for group in result.cluster_groups:
+        print(
+            f"{group.parent_tier}: retained cluster values={group.retained_values}, "
+            f"filtered cluster values={group.filtered_values}, "
+            f"annotations created={group.annotations_created}, "
+            f"warnings={group.warnings}; removed cluster tiers: "
+            f"{', '.join(group.cluster_tiers)}"
+        )
     for warning in result.warnings:
         print(f"Warning: {warning}", file=sys.stderr)
     print(f"Removed time slots: {result.removed_time_slots}")

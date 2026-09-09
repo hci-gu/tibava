@@ -81,6 +81,39 @@ class ConfidenceParsingTests(unittest.TestCase):
 
 
 class FilteringTests(unittest.TestCase):
+    def test_cluster_scores_are_thresholded_then_merged_into_empty_parent(self) -> None:
+        tree = (
+            EafFixture()
+            .add_tier("Any Clustering Parent", [])
+            .add_tier(
+                "Cluster 1",
+                [(0, 100, "value:0.6"), (100, 200, "value:0.7")],
+            )
+            .add_tier(
+                "Cluster 2",
+                [(0, 100, "value:0.4"), (100, 200, "value:0.8")],
+            )
+            .add_tier("Following Tier", [(0, 200, "untouched")])
+            .tree()
+        )
+
+        result = filterer.filter_tree(tree, 0.5)
+
+        self.assertEqual(
+            tier_values(tree, "Any Clustering Parent"),
+            ["Cluster 1", "Cluster 1; Cluster 2"],
+        )
+        remaining_tiers = [
+            tier.get("TIER_ID") for tier in tree.getroot().findall("TIER")
+        ]
+        self.assertNotIn("Cluster 1", remaining_tiers)
+        self.assertNotIn("Cluster 2", remaining_tiers)
+        self.assertIn("Following Tier", remaining_tiers)
+        self.assertEqual(len(result.cluster_groups), 1)
+        self.assertEqual(result.cluster_groups[0].retained_values, 3)
+        self.assertEqual(result.cluster_groups[0].filtered_values, 1)
+        self.assertEqual(result.cluster_groups[0].annotations_created, 2)
+
     def test_ocr_results_are_concatenated_once_per_time_window(self) -> None:
         tree = (
             EafFixture()
@@ -190,6 +223,7 @@ class FilteringTests(unittest.TestCase):
         tree = (
             EafFixture()
             .add_tier("Audio RMS", [(0, 100, "value:0.25")])
+            .add_tier("RMS Volume", [(0, 100, "value:0.5")])
             .add_tier("Other Scalar", [(0, 100, "value:0.75")])
             .tree()
         )
@@ -197,16 +231,19 @@ class FilteringTests(unittest.TestCase):
         filterer.filter_tree(tree, 0.5)
 
         self.assertEqual(tier_values(tree, "Audio RMS"), ["0.25"])
+        self.assertEqual(tier_values(tree, "RMS Volume"), ["0.5"])
         self.assertEqual(tier_values(tree, "Other Scalar"), ["value:0.75"])
 
     def test_requested_value_prefixes_are_stripped(self) -> None:
         values = [
             "Transcript:spoken text",
+            "Audio Gender Classification:Female",
             "Audio Gender:Male",
             "Emotion:Happy",
             "Shot Size:Close-Up",
             "Shot Scale:Full",
             "Shot Movement:Static",
+            "Speech Sentiment:negative",
             "Sentiment:positive",
             "unconfigured:preserved",
         ]
@@ -221,16 +258,18 @@ class FilteringTests(unittest.TestCase):
             tier_values(tree, "Labels"),
             [
                 "spoken text",
+                "Female",
                 "Male",
                 "Happy",
                 "Close-Up",
                 "Full",
                 "Static",
+                "negative",
                 "positive",
                 "unconfigured:preserved",
             ],
         )
-        self.assertEqual(result.stripped_value_prefixes, 7)
+        self.assertEqual(result.stripped_value_prefixes, 9)
 
     def test_generic_discovery_and_per_interval_filtering(self) -> None:
         tree = (
