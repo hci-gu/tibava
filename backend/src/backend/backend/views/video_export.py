@@ -2,10 +2,10 @@ import json
 import logging
 import traceback
 import logging
-import sys
 import io
 import csv
 import base64
+from contextlib import redirect_stdout
 from dataclasses import dataclass
 
 from typing import List, Tuple
@@ -21,6 +21,7 @@ import pandas as pd
 import zipfile
 
 from backend.utils.color import get_closest_color
+from backend.eaf_filter import filter_eaf_xml
 from backend.models import (
     Video,
     Annotation,
@@ -718,14 +719,31 @@ class VideoExport(View):
         eaf.add_linked_file(file_path=f"{video_db.id.hex}.mp4", mimetype="video/mp4")
 
         # get the boundary information from the timeline selected in parameters
-        try:
-            shot_timeline_db = Timeline.objects.get(
-                id=parameters.get("shot_timeline_id")
-            )
-        except Timeline.DoesNotExist:
-            raise Exception
+        shot_timeline_id = parameters.get("shot_timeline_id")
+        if shot_timeline_id:
+            try:
+                shot_timeline_db = Timeline.objects.get(
+                    id=shot_timeline_id,
+                    video=video_db,
+                )
+            except Timeline.DoesNotExist:
+                raise ValueError("The selected shot timeline does not exist.")
+        else:
+            shot_timeline_db = Timeline.objects.filter(
+                video=video_db,
+                type=Timeline.TYPE_ANNOTATION,
+                name__iexact="Shots",
+            ).first()
+            if shot_timeline_db is None:
+                raise ValueError("No Shots timeline is available for ELAN export.")
 
-        aggregation = ["max", "min", "mean"][parameters.get("aggregation")]
+        try:
+            aggregation_index = int(parameters.get("aggregation", 0))
+            if not 0 <= aggregation_index <= 2:
+                raise ValueError
+            aggregation = ["max", "min", "mean"][aggregation_index]
+        except (TypeError, ValueError, IndexError) as exc:
+            raise ValueError("Invalid ELAN aggregation method.") from exc
 
         # if the timeline is not of type annotation, raise an Exception
         if shot_timeline_db.type != Timeline.TYPE_ANNOTATION:
@@ -738,6 +756,20 @@ class VideoExport(View):
         )
         for x in shot_timeline_segments:
             shots.append(Shot(start=x.start, end=x.end))
+
+        boundary_tier = shot_timeline_db.name
+        eaf.add_tier(tier_id=boundary_tier)
+        for index, shot in enumerate(shots):
+            start_time = int(shot.start * 1000)
+            end_time = int(shot.end * 1000)
+            if start_time >= end_time:
+                continue
+            eaf.add_annotation(
+                boundary_tier,
+                start=start_time,
+                end=end_time,
+                value=f"value:{index}",
+            )
 
         data_manager = DataManager("/predictions/")
 
@@ -830,11 +862,19 @@ class VideoExport(View):
                             tier, start=start_time, end=end_time, value=f"value:{id}"
                         )
 
-        stdout = sys.stdout
-        sys.stdout = str_out = StringIO()
-        to_eaf(file_path="-", eaf_obj=eaf)
-        sys.stdout = stdout
+        str_out = StringIO()
+        with redirect_stdout(str_out):
+            to_eaf(file_path="-", eaf_obj=eaf)
         result = str_out.getvalue()
+
+        result, filter_result = filter_eaf_xml(result)
+        logger.info(
+            "Filtered single-video ELAN export: groups=%d cluster_groups=%d "
+            "warnings=%d",
+            len(filter_result.groups),
+            len(filter_result.cluster_groups),
+            len(filter_result.warnings),
+        )
 
         return result
 

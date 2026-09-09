@@ -30,6 +30,8 @@ class ClusterToScalarParser(Parser):
         self.valid_parameter = {
             "timeline": {"parser": str, "default": "Cluster Similarity"},
             "cluster_timeline_item_id": {"parser": str},
+            "parent_timeline_id": {"parser": str, "default": None},
+            "fps": {"parser": float, "default": 2.0},
         }
 
 
@@ -51,6 +53,7 @@ class ClusterToScalar(Task):
         dry_run: bool = False,
         **kwargs,
     ):
+        update_progress = kwargs.get("update_progress", True)
         manager = DataManager(self.config["output_path"])
 
         cti = ClusterTimelineItem.objects.get(
@@ -94,37 +97,53 @@ class ClusterToScalar(Task):
         # upload all data
         video_id = self.upload_video(client, video)
 
-        # face detection on video
-        video_facedetection = self.run_analyser(
-            client,
-            "insightface_video_detector_torch",
-            parameters={
-                "fps": parameters.get("fps"),
-            },
-            inputs={"video": video_id},
-            outputs=["kpss", "faces"],
-        )
+        if cti.type == ClusterTimelineItem.TYPE_FACE:
+            video_facedetection = self.run_analyser(
+                client,
+                "insightface_video_detector_torch",
+                parameters={
+                    "fps": parameters.get("fps"),
+                },
+                inputs={"video": video_id},
+                outputs=["kpss", "faces"],
+            )
 
-        if plugin_run is not None:
-            plugin_run.progress = 0.25
-            plugin_run.save()
+            if video_facedetection is None:
+                raise Exception
 
-        if video_facedetection is None:
-            raise Exception
+            video_feature_result = self.run_analyser(
+                client,
+                "insightface_video_feature_extractor",
+                inputs={
+                    "video": video_id,
+                    "kpss": video_facedetection[0]["kpss"],
+                },
+                outputs=["features"],
+            )
+        elif cti.type == ClusterTimelineItem.TYPE_PLACE:
+            video_feature_result = self.run_analyser(
+                client,
+                "clip_image_embedding",
+                parameters={
+                    "fps": parameters.get("fps"),
+                },
+                inputs={"video": video_id},
+                outputs=["embeddings"],
+            )
+        else:
+            raise ValueError(f"Unsupported cluster timeline item type: {cti.type}")
 
-        video_feature_result = self.run_analyser(
-            client,
-            "insightface_video_feature_extractor",
-            inputs={"video": video_id, "kpss": video_facedetection[0]["kpss"]},
-            outputs=["features"],
-        )
-
-        if plugin_run is not None:
+        if plugin_run is not None and update_progress:
             plugin_run.progress = 0.5
             plugin_run.save()
 
         if video_feature_result is None:
             raise Exception
+
+        if cti.type == ClusterTimelineItem.TYPE_FACE:
+            target_features = video_feature_result[0]["features"]
+        else:
+            target_features = video_feature_result[0]["embeddings"]
 
         result = self.run_analyser(
             client,
@@ -134,13 +153,13 @@ class ClusterToScalar(Task):
                 "index": parameters.get("index"),
             },
             inputs={
-                "target_features": video_feature_result[0]["features"],
+                "target_features": target_features,
                 "query_features": query_image_feature_id,
             },
             outputs=["probs"],
         )
 
-        if plugin_run is not None:
+        if plugin_run is not None and update_progress:
             plugin_run.progress = 0.75
             plugin_run.save()
 
@@ -163,10 +182,17 @@ class ClusterToScalar(Task):
 
         with transaction.atomic():
             with aggregated_result[1]["aggregated_scalar"] as data:
+                parent_timeline = None
+                if parameters.get("parent_timeline_id"):
+                    parent_timeline = Timeline.objects.get(
+                        id=parameters.get("parent_timeline_id"),
+                        video=video,
+                    )
+
                 plugin_run_result_db = PluginRunResult.objects.create(
                     plugin_run=plugin_run,
                     data_id=data.id,
-                    name="face_identification",
+                    name="cluster_similarity",
                     type=PluginRunResult.TYPE_SCALAR,
                 )
                 timeline_db = Timeline.objects.create(
@@ -175,13 +201,59 @@ class ClusterToScalar(Task):
                     type=Timeline.TYPE_PLUGIN_RESULT,
                     plugin_run_result=plugin_run_result_db,
                     visualization=Timeline.VISUALIZATION_SCALAR_COLOR,
+                    parent=parent_timeline,
                 )
 
                 return {
                     "plugin_run": plugin_run.id.hex,
                     "plugin_run_results": [plugin_run_result_db.id.hex],
-                    "timelines": {"annotations": timeline_db},
+                    "timelines": {"annotations": timeline_db.id.hex},
                     "data": {
                         "annotations": aggregated_result[1]["aggregated_scalar"].id
                     },
                 }
+
+
+def create_cluster_scalar_timelines(
+    clusters,
+    parent_name: str,
+    fps: float,
+    video: Video,
+    user: TibavaUser,
+    plugin_run: PluginRun,
+):
+    clusters = list(clusters)
+    if not clusters:
+        return {"plugin_run_results": [], "timelines": {}}
+
+    parent_timeline = Timeline.objects.create(
+        video=video,
+        name=parent_name,
+        type=Timeline.TYPE_PLUGIN_RESULT,
+    )
+    plugin_run_results = []
+    timelines = {"parent": parent_timeline.id.hex}
+    converter = ClusterToScalar()
+
+    for index, cluster in enumerate(clusters):
+        result = converter(
+            {
+                "timeline": cluster.name,
+                "cluster_timeline_item_id": cluster.id.hex,
+                "parent_timeline_id": parent_timeline.id.hex,
+                "fps": fps,
+            },
+            video=video,
+            user=user,
+            plugin_run=plugin_run,
+            update_progress=False,
+        )
+        plugin_run_results.extend(result["plugin_run_results"])
+        timelines[cluster.id.hex] = result["timelines"]["annotations"]
+        plugin_run.progress = 0.8 + (0.19 * (index + 1) / len(clusters))
+        plugin_run.save()
+
+    return {
+        "plugin_run_results": plugin_run_results,
+        "timelines": timelines,
+    }

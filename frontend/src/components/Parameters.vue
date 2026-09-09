@@ -150,5 +150,35 @@ export default {
     },
     ...mapStores(useTimelineStore, usePluginRunResultStore),
   },
+  watch: {
+    shot_timelines: {
+      immediate: true,
+      handler(timelines) {
+        for (const parameter of this.parameters) {
+          const selectedVideoIds =
+            parameter.value && parameter.value.video_ids
+              ? parameter.value.video_ids
+              : [];
+          const selectionIsCurrent =
+            selectedVideoIds.length === this.videoIds.length &&
+            this.videoIds.every((videoId) => selectedVideoIds.includes(videoId));
+          if (
+            parameter.field !== "select_timeline" ||
+            selectionIsCurrent ||
+            !parameter.default_name
+          ) {
+            continue;
+          }
+          const defaultTimeline = timelines.find(
+            (timeline) =>
+              timeline.name.toLowerCase() === parameter.default_name.toLowerCase()
+          );
+          if (defaultTimeline) {
+            this.$set(parameter, "value", defaultTimeline.ids);
+          }
+        }
+      },
+    },
+  },
 };
 </script>
