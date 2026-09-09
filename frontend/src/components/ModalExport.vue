@@ -135,6 +135,7 @@ export default {
             {
               field: "select_timeline",
               name: "shot_timeline_id",
+              default_name: "Shots",
               text: this.$t("modal.plugin.shot_timeline_name"),
               hint: this.$t("modal.plugin.shot_timeline_hint"),
             },
@@ -177,7 +178,11 @@ export default {
         if ("file" in e) {
           return { name: e.name, file: e.file };
         } else if (e.name === "shot_timeline_id") {
-          return { name: e.name, value: e.value.timeline_ids[0] };
+          const timelineIds = e.value && e.value.timeline_ids;
+          return {
+            name: e.name,
+            value: timelineIds && timelineIds.length ? timelineIds[0] : null,
+          };
         } else {
           return { name: e.name, value: e.value };
         }
