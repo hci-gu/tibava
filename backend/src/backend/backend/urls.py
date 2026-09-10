@@ -37,6 +37,16 @@ urlpatterns = [
         name="video_batch_presets",
     ),
     path(
+        "video/batch/presets/save",
+        views.VideoBatchPresetSave.as_view(),
+        name="video_batch_preset_save",
+    ),
+    path(
+        "video/batch/presets/delete",
+        views.VideoBatchPresetDelete.as_view(),
+        name="video_batch_preset_delete",
+    ),
+    path(
         "video/batch/plugin-catalog",
         views.VideoBatchPluginCatalog.as_view(),
         name="video_batch_plugin_catalog",

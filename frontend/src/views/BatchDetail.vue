@@ -15,7 +15,7 @@
             outlined
             class="mr-2"
             :disabled="!canRunBatchPlugins"
-            @click="confirmRunPreset = true"
+            @click="openRunPresetDialog"
           >
             <v-icon left>mdi-play</v-icon>
             Run preset
@@ -249,6 +249,15 @@
         <v-card>
           <v-card-title>Run preset</v-card-title>
           <v-card-text>
+            <v-select
+              v-model="presetToRun"
+              :items="runPresetItems"
+              item-text="name"
+              item-value="id"
+              label="Preset"
+              outlined
+              dense
+            ></v-select>
             <v-radio-group v-model="presetScopeMode" dense>
               <v-radio label="All ready videos" value="all"></v-radio>
               <v-radio
@@ -274,7 +283,7 @@
             <v-btn
               color="primary"
               text
-              :disabled="!canRunBatchPlugins"
+              :disabled="!canRunBatchPlugins || !presetToRun"
               @click="runPreset"
             >Run</v-btn>
           </v-card-actions>
@@ -334,6 +343,7 @@ export default {
       search: "",
       selectedItemIds: [],
       presetScopeMode: "all",
+      presetToRun: null,
       showCustomPluginSet: false,
       customPluginItemIds: [],
       customPluginScopeLabel: "all ready videos",
@@ -379,6 +389,22 @@ export default {
         (entry) => entry.id === this.batch.preset
       );
       return preset ? preset.name : this.batch.preset;
+    },
+    runPresetItems() {
+      const presets = [...this.videoBatchStore.presets];
+      if (
+        this.batch &&
+        this.batch.preset &&
+        this.batch.custom_preset_definition &&
+        !presets.some((preset) => preset.id === this.batch.preset)
+      ) {
+        presets.push({
+          id: this.batch.preset,
+          name: this.presetLabel,
+          source: "batch",
+        });
+      }
+      return presets;
     },
     filteredItems() {
       if (!this.batch || !this.batch.items) return [];
@@ -634,9 +660,16 @@ export default {
       this.confirmRunPreset = false;
       await this.videoBatchStore.runScopedPreset({
         batchId: this.batchId,
+        preset: this.presetToRun,
         scope: this.scopeForPresetRun(),
       });
       this.fetchBatch();
+    },
+    openRunPresetDialog() {
+      this.presetToRun =
+        (this.batch && this.batch.preset) ||
+        (this.runPresetItems.length ? this.runPresetItems[0].id : null);
+      this.confirmRunPreset = true;
     },
     scopeForPresetRun() {
       if (this.presetScopeMode === "selected") {

@@ -15,6 +15,7 @@ import backend.tasks
 from backend.models import (
     PluginRun,
     PluginRunResult,
+    SavedBatchPreset,
     Timeline,
     TimelineSegment,
     Video,
@@ -55,7 +56,9 @@ from backend.views.video_batch import (
     VideoBatchGet,
     VideoBatchList,
     VideoBatchPluginCatalog,
+    VideoBatchPresetDelete,
     VideoBatchPresetList,
+    VideoBatchPresetSave,
     VideoBatchRetryFailed,
     VideoBatchRetryFailedPluginSteps,
     VideoBatchRunPluginSet,
@@ -770,6 +773,40 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertFalse(VideoBatch.objects.filter(name="Bad preset").exists())
         enqueue.assert_not_called()
 
+    @override_settings(BATCH_UPLOAD_ROOT=tempfile.gettempdir())
+    def test_batch_upload_snapshots_saved_preset(self):
+        definition = {
+            "name": "Saved thumbnails",
+            "description": "Reusable",
+            "steps": [{"plugin": "thumbnail", "parameters": []}],
+        }
+        preset = SavedBatchPreset.objects.create(
+            owner=self.user,
+            name=definition["name"],
+            description=definition["description"],
+            definition=definition,
+        )
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/upload",
+                {
+                    "name": "Saved preset batch",
+                    "preset": preset.preset_id,
+                    "auto_run_preset": "true",
+                    "files": [SimpleUploadedFile("a.mp4", b"a")],
+                },
+            )
+        )
+
+        with patch("backend.views.video_batch.enqueue_batch_ingest"):
+            response = VideoBatchUpload.as_view()(request)
+
+        batch = VideoBatch.objects.get(id=json.loads(response.content)["batch_id"])
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(batch.preset, preset.preset_id)
+        self.assertEqual(batch.custom_preset_definition, definition)
+        self.assertTrue(batch.auto_run_preset)
+
     def test_batch_list_and_detail_are_scoped_to_owner(self):
         own_batch = VideoBatch.objects.create(owner=self.user, name="Own")
         other_batch = VideoBatch.objects.create(owner=self.other_user, name="Other")
@@ -895,6 +932,88 @@ class VideoBatchAPIDatabaseTests(TestCase):
 
         self.assertTrue(entries)
         self.assertTrue(entries[0]["description"])
+
+    def test_saved_preset_can_be_created_updated_and_listed(self):
+        create_request = self.authenticated(
+            self.factory.post(
+                "/video/batch/presets/save",
+                data=json.dumps(
+                    {
+                        "name": "My thumbnails",
+                        "description": "Reusable thumbnail settings",
+                        "steps": [{"plugin": "thumbnail", "parameters": []}],
+                    }
+                ),
+                content_type="application/json",
+            )
+        )
+
+        create_response = VideoBatchPresetSave.as_view()(create_request)
+        created = json.loads(create_response.content)["entry"]
+
+        self.assertEqual(create_response.status_code, 200)
+        self.assertTrue(created["id"].startswith("saved:"))
+        self.assertTrue(created["editable"])
+        self.assertEqual(SavedBatchPreset.objects.count(), 1)
+
+        update_request = self.authenticated(
+            self.factory.post(
+                "/video/batch/presets/save",
+                data=json.dumps(
+                    {
+                        "id": created["id"],
+                        "name": "My thumbnail preset",
+                        "description": "Updated",
+                        "steps": [{"plugin": "thumbnail", "parameters": []}],
+                    }
+                ),
+                content_type="application/json",
+            )
+        )
+        update_response = VideoBatchPresetSave.as_view()(update_request)
+        self.assertEqual(update_response.status_code, 200)
+        self.assertEqual(SavedBatchPreset.objects.get().name, "My thumbnail preset")
+
+        list_response = VideoBatchPresetList.as_view()(
+            self.authenticated(self.factory.get("/video/batch/presets"))
+        )
+        entries = json.loads(list_response.content)["entries"]
+        saved_entries = [entry for entry in entries if entry["source"] == "saved"]
+        self.assertEqual(len(saved_entries), 1)
+        self.assertEqual(saved_entries[0]["name"], "My thumbnail preset")
+
+    def test_saved_preset_is_private_and_can_be_deleted(self):
+        preset = SavedBatchPreset.objects.create(
+            owner=self.user,
+            name="Private preset",
+            definition={
+                "name": "Private preset",
+                "description": "",
+                "steps": [{"plugin": "thumbnail", "parameters": []}],
+            },
+        )
+        other_request = self.authenticated(
+            self.factory.post(
+                "/video/batch/presets/delete",
+                data=json.dumps({"id": preset.preset_id}),
+                content_type="application/json",
+            ),
+            user=self.other_user,
+        )
+        response = VideoBatchPresetDelete.as_view()(other_request)
+        self.assertEqual(response.status_code, 500)
+        self.assertTrue(SavedBatchPreset.objects.filter(id=preset.id).exists())
+
+        owner_request = self.authenticated(
+            self.factory.post(
+                "/video/batch/presets/delete",
+                data=json.dumps({"id": preset.preset_id}),
+                content_type="application/json",
+            )
+        )
+        response = VideoBatchPresetDelete.as_view()(owner_request)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(SavedBatchPreset.objects.filter(id=preset.id).exists())
 
     def test_plugin_catalog_endpoint_returns_supported_and_disabled_plugins(self):
         response = VideoBatchPluginCatalog.as_view()(
