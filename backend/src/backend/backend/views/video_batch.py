@@ -28,6 +28,7 @@ from backend.utils.plugin_presets import (
     list_batch_presets,
     normalize_custom_batch_preset,
     validate_batch_preset,
+    validate_batch_preset_definition,
 )
 from backend.views.video_export import ElanExportError, VideoExport
 
@@ -91,6 +92,26 @@ def user_has_active_batch_capacity(batch):
         .count()
     )
     return active_count < get_max_active_batch_ingests_per_user()
+
+
+def reset_batch_plugin_runs(batch, preset_id, item_ids):
+    """Remove prior scheduler state so a manual run executes again."""
+    VideoBatchPluginRun.objects.filter(
+        batch=batch,
+        preset=preset_id,
+        item_id__in=item_ids,
+    ).delete()
+
+
+def resolve_batch_preset_for_run(batch, requested_preset=None):
+    preset_id = requested_preset or batch.preset or DEFAULT_BATCH_PRESET
+    preset_definition = None
+    if preset_id == batch.preset and batch.custom_preset_definition is not None:
+        preset_definition = batch.custom_preset_definition
+        validation = validate_batch_preset_definition(preset_definition)
+    else:
+        validation = validate_batch_preset(preset_id)
+    return preset_id, preset_definition, validation
 
 
 def ready_item_ids_for_scope(batch, scope):
@@ -600,6 +621,16 @@ class VideoBatchCancel(View):
             except VideoBatch.DoesNotExist:
                 return JsonResponse({"status": "error", "type": "not_exist"}, status=500)
 
+            if batch.status not in {
+                VideoBatch.STATUS_UPLOADING,
+                VideoBatch.STATUS_INGESTING,
+                VideoBatch.STATUS_RUNNING,
+            }:
+                return JsonResponse(
+                    {"status": "error", "type": "batch_not_cancellable"},
+                    status=409,
+                )
+
             cancel_batch_work(batch)
             return JsonResponse({"status": "ok", "batch_id": batch.id.hex})
         except Exception:
@@ -695,8 +726,10 @@ class VideoBatchRunPreset(View):
             except VideoBatch.DoesNotExist:
                 return JsonResponse({"status": "error", "type": "not_exist"}, status=500)
 
-            preset = data.get("preset") or batch.preset or DEFAULT_BATCH_PRESET
-            validation = validate_batch_preset(preset)
+            preset, preset_definition, validation = resolve_batch_preset_for_run(
+                batch,
+                data.get("preset"),
+            )
             if validation["status"] != "ok":
                 return JsonResponse(validation, status=500)
 
@@ -706,9 +739,25 @@ class VideoBatchRunPreset(View):
                     status=500,
                 )
 
+            scope_result = ready_item_ids_for_scope(batch, data.get("scope"))
+            if scope_result["status"] != "ok":
+                return JsonResponse(scope_result, status=500)
+
+            if batch.plugin_runs.filter(
+                status=VideoBatchPluginRun.STATUS_RUNNING
+            ).exists():
+                return JsonResponse(
+                    {"status": "error", "type": "batch_already_running"},
+                    status=409,
+                )
+
             batch.preset = preset
-            batch.custom_preset_definition = None
-            batch.custom_preset_item_ids = None
+            batch.custom_preset_definition = preset_definition
+            batch.custom_preset_item_ids = (
+                [item_id.hex for item_id in scope_result["item_ids"]]
+                if preset_definition is not None
+                else None
+            )
             batch.save(
                 update_fields=[
                     "preset",
@@ -717,12 +766,20 @@ class VideoBatchRunPreset(View):
                     "update_date",
                 ]
             )
-            scope_result = ready_item_ids_for_scope(batch, data.get("scope"))
-            if scope_result["status"] != "ok":
-                return JsonResponse(scope_result, status=500)
+
+            reset_batch_plugin_runs(
+                batch,
+                preset,
+                scope_result["item_ids"],
+            )
 
             run_video_batch_preset.apply_async(
-                (batch.id, preset, scope_result["item_ids"], None)
+                (
+                    batch.id,
+                    preset,
+                    scope_result["item_ids"],
+                    preset_definition,
+                )
             )
             return JsonResponse({"status": "ok", "batch_id": batch.id.hex})
         except Exception:
@@ -754,6 +811,14 @@ class VideoBatchRunPluginSet(View):
                     status=500,
                 )
 
+            if batch.plugin_runs.filter(
+                status=VideoBatchPluginRun.STATUS_RUNNING
+            ).exists():
+                return JsonResponse(
+                    {"status": "error", "type": "batch_already_running"},
+                    status=409,
+                )
+
             preflight = preflight_batch_plugin_set(batch, data)
             if preflight["status"] != "ok":
                 return JsonResponse(preflight, status=500)
@@ -770,6 +835,11 @@ class VideoBatchRunPluginSet(View):
                     "custom_preset_item_ids",
                     "update_date",
                 ]
+            )
+            reset_batch_plugin_runs(
+                batch,
+                preflight["preset_id"],
+                preflight["item_ids"],
             )
             run_video_batch_preset.apply_async(
                 (

@@ -1018,6 +1018,27 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(delete_response.status_code, 200)
         self.assertFalse(VideoBatch.objects.filter(id=batch.id).exists())
 
+    def test_cancel_rejects_completed_batch(self):
+        batch = VideoBatch.objects.create(
+            owner=self.user,
+            name="Completed",
+            status=VideoBatch.STATUS_READY,
+        )
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/cancel",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+
+        response = VideoBatchCancel.as_view()(request)
+
+        batch.refresh_from_db()
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.content)["type"], "batch_not_cancellable")
+        self.assertEqual(batch.status, VideoBatch.STATUS_READY)
+
     def test_run_preset_rejects_when_user_has_another_active_batch(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Ready")
         VideoBatch.objects.create(
@@ -1081,6 +1102,81 @@ class VideoBatchAPIDatabaseTests(TestCase):
         _, args, _ = run_preset.apply_async.mock_calls[0]
         self.assertEqual(args[0][1], DEFAULT_BATCH_PRESET)
         self.assertEqual(args[0][2], [item.id])
+
+    def test_run_preset_preserves_current_custom_definition_and_restarts_rows(self):
+        custom_preset = {
+            "name": "Custom thumbnails",
+            "description": "Custom plugin set",
+            "steps": [{"plugin": "thumbnail", "parameters": []}],
+        }
+        batch = VideoBatch.objects.create(
+            owner=self.user,
+            name="Custom rerun",
+            status=VideoBatch.STATUS_READY,
+            preset="custom:thumbnails",
+            custom_preset_definition=custom_preset,
+        )
+        item = self.create_ready_batch_item(batch, "video.mp4")
+        previous = VideoBatchPluginRun.objects.create(
+            batch=batch,
+            item=item,
+            preset=batch.preset,
+            step_index=0,
+            plugin="thumbnail",
+            status=VideoBatchPluginRun.STATUS_DONE,
+        )
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/run-preset",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+
+        with patch("backend.views.video_batch.run_video_batch_preset") as run_preset:
+            response = VideoBatchRunPreset.as_view()(request)
+
+        batch.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(VideoBatchPluginRun.objects.filter(id=previous.id).exists())
+        self.assertEqual(batch.custom_preset_definition, custom_preset)
+        self.assertEqual(batch.custom_preset_item_ids, [item.id.hex])
+        run_preset.apply_async.assert_called_once_with(
+            (batch.id, batch.preset, [item.id], custom_preset)
+        )
+
+    def test_run_preset_restarts_completed_rows_for_builtin_preset(self):
+        batch = VideoBatch.objects.create(
+            owner=self.user,
+            name="Built-in rerun",
+            status=VideoBatch.STATUS_READY,
+            preset=DEFAULT_BATCH_PRESET,
+        )
+        item = self.create_ready_batch_item(batch, "video.mp4")
+        previous = VideoBatchPluginRun.objects.create(
+            batch=batch,
+            item=item,
+            preset=DEFAULT_BATCH_PRESET,
+            step_index=0,
+            plugin="thumbnail",
+            status=VideoBatchPluginRun.STATUS_DONE,
+        )
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/run-preset",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+
+        with patch("backend.views.video_batch.run_video_batch_preset") as run_preset:
+            response = VideoBatchRunPreset.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(VideoBatchPluginRun.objects.filter(id=previous.id).exists())
+        run_preset.apply_async.assert_called_once_with(
+            (batch.id, DEFAULT_BATCH_PRESET, [item.id], None)
+        )
 
     def test_run_plugin_set_dispatches_custom_preset_for_folder_scope(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Custom")
