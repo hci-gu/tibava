@@ -582,19 +582,41 @@ def run_video_batch_preset(
             break
 
         dispatched = False
-        for item in scoped_ready_items(batch, item_ids):
+        items = list(scoped_ready_items(batch, item_ids))
+        schedulable = []
+        for item in items:
             tracker = next_schedulable_tracker(batch, item, preset_id, preset)
-            if tracker is None:
+            if tracker is not None:
+                schedulable.append(tracker)
+
+        lowest_unfinished_step = (
+            VideoBatchPluginRun.objects.filter(
+                batch=batch,
+                item_id__in=[item.id for item in items],
+                preset=preset_id,
+                status__in=[
+                    VideoBatchPluginRun.STATUS_PENDING,
+                    VideoBatchPluginRun.STATUS_RUNNING,
+                ],
+            )
+            .order_by("step_index")
+            .values_list("step_index", flat=True)
+            .first()
+        )
+
+        for tracker in schedulable:
+            if tracker.step_index != lowest_unfinished_step:
                 continue
 
-            dispatched = dispatch_batch_plugin_step(
+            tracker_dispatched = dispatch_batch_plugin_step(
                 tracker,
                 batch,
                 preset_id,
                 item_ids=item_ids,
                 preset_definition=preset_definition,
             )
-            if dispatched:
+            if tracker_dispatched:
+                dispatched = True
                 dispatched_count += 1
                 capacity -= 1
             if capacity <= 0:

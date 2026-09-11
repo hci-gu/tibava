@@ -1937,6 +1937,49 @@ class VideoBatchTaskDatabaseTests(TestCase):
         )
         apply_async.assert_called_once()
 
+    @override_settings(
+        MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH=4,
+        MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER=10,
+        MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL=10,
+    )
+    def test_batch_scheduler_finishes_plugin_for_all_videos_before_next_step(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Plugin first")
+        for name in ["a.mp4", "b.mp4"]:
+            VideoBatchItem.objects.create(
+                batch=batch,
+                video=self.make_video(name),
+                original_filename=name,
+                original_path=name,
+                ingest_status=VideoBatchItem.STATUS_READY,
+            )
+
+        with patch("backend.tasks.batch.run_video_batch_plugin_step.apply_async") as apply_async:
+            run_video_batch_preset(batch.id, "default_batch_analysis")
+            first_step_calls = list(apply_async.call_args_list)
+
+            first_step_runs = batch.plugin_runs.filter(step_index=0).order_by("item_id")
+            completed_first_step = first_step_runs.first()
+            completed_first_step.status = VideoBatchPluginRun.STATUS_DONE
+            completed_first_step.save(update_fields=["status", "update_date"])
+            apply_async.reset_mock()
+            run_video_batch_preset(batch.id, "default_batch_analysis")
+            apply_async.assert_not_called()
+
+            first_step_runs.update(status=VideoBatchPluginRun.STATUS_DONE)
+            run_video_batch_preset(batch.id, "default_batch_analysis")
+            second_step_calls = list(apply_async.call_args_list)
+
+        self.assertEqual(len(first_step_calls), 2)
+        self.assertEqual(
+            {call.args[0][0] for call in first_step_calls},
+            set(batch.plugin_runs.filter(step_index=0).values_list("id", flat=True)),
+        )
+        self.assertEqual(len(second_step_calls), 2)
+        self.assertEqual(
+            {call.args[0][0] for call in second_step_calls},
+            set(batch.plugin_runs.filter(step_index=1).values_list("id", flat=True)),
+        )
+
     @override_settings(MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH=4)
     def test_batch_scheduler_limits_rows_to_scoped_items(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Scoped scheduler")
