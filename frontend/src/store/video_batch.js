@@ -32,6 +32,39 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         }
       });
     },
+    async savePreset({ id = null, name, description = "", steps }) {
+      return axios
+        .post(`${config.API_LOCATION}/video/batch/presets/save`, {
+          id,
+          name,
+          description,
+          steps,
+        })
+        .then((res) => {
+          if (res.data.status === "ok") {
+            const entry = res.data.entry;
+            const index = this.presets.findIndex((preset) => preset.id === entry.id);
+            if (index === -1) {
+              this.presets.push(entry);
+            } else {
+              this.presets.splice(index, 1, entry);
+            }
+          }
+          return res.data;
+        });
+    },
+    async deletePreset(presetId) {
+      return axios
+        .post(`${config.API_LOCATION}/video/batch/presets/delete`, {
+          id: presetId,
+        })
+        .then((res) => {
+          if (res.data.status === "ok") {
+            this.presets = this.presets.filter((preset) => preset.id !== presetId);
+          }
+          return res.data;
+        });
+    },
     async fetchPluginCatalog() {
       return axios.get(`${config.API_LOCATION}/video/batch/plugin-catalog`).then((res) => {
         if (res.data.status === "ok") {

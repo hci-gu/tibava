@@ -10,7 +10,12 @@ from django.http import HttpResponse, JsonResponse
 from django.utils.text import slugify
 from django.views import View
 
-from backend.models import VideoBatch, VideoBatchItem, VideoBatchPluginRun
+from backend.models import (
+    SavedBatchPreset,
+    VideoBatch,
+    VideoBatchItem,
+    VideoBatchPluginRun,
+)
 from backend.tasks.batch import cancel_batch_work, ingest_video_batch, run_video_batch_preset
 from backend.utils.batch_upload import (
     get_batch_dir,
@@ -28,6 +33,7 @@ from backend.utils.plugin_presets import (
     list_batch_presets,
     normalize_custom_batch_preset,
     validate_batch_preset,
+    validate_batch_preset_definition,
 )
 from backend.views.video_export import ElanExportError, VideoExport
 
@@ -91,6 +97,74 @@ def user_has_active_batch_capacity(batch):
         .count()
     )
     return active_count < get_max_active_batch_ingests_per_user()
+
+
+def reset_batch_plugin_runs(batch, preset_id, item_ids):
+    """Remove prior scheduler state so a manual run executes again."""
+    VideoBatchPluginRun.objects.filter(
+        batch=batch,
+        preset=preset_id,
+        item_id__in=item_ids,
+    ).delete()
+
+
+def resolve_batch_preset_for_run(batch, requested_preset=None):
+    preset_id = requested_preset or batch.preset or DEFAULT_BATCH_PRESET
+    preset_definition = None
+    saved_id = saved_preset_uuid(preset_id)
+    if saved_id is not None:
+        preset_definition, validation = resolve_saved_or_builtin_preset(
+            batch.owner,
+            preset_id,
+        )
+        if (
+            validation["status"] != "ok"
+            and preset_id == batch.preset
+            and batch.custom_preset_definition is not None
+        ):
+            preset_definition = batch.custom_preset_definition
+            validation = validate_batch_preset_definition(preset_definition)
+    elif preset_id == batch.preset and batch.custom_preset_definition is not None:
+        preset_definition = batch.custom_preset_definition
+        validation = validate_batch_preset_definition(preset_definition)
+    else:
+        preset_definition, validation = resolve_saved_or_builtin_preset(
+            batch.owner,
+            preset_id,
+        )
+    return preset_id, preset_definition, validation
+
+
+def saved_preset_uuid(preset_id):
+    if not isinstance(preset_id, str) or not preset_id.startswith("saved:"):
+        return None
+    try:
+        return uuid.UUID(preset_id.removeprefix("saved:"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def resolve_saved_or_builtin_preset(owner, preset_id):
+    saved_id = saved_preset_uuid(preset_id)
+    if saved_id is None:
+        return None, validate_batch_preset(preset_id)
+    try:
+        saved = SavedBatchPreset.objects.get(id=saved_id, owner=owner)
+    except SavedBatchPreset.DoesNotExist:
+        return None, {"status": "error", "type": "not_exist"}
+    definition = saved.definition
+    return definition, validate_batch_preset_definition(definition)
+
+
+def validate_reusable_preset_definition(definition):
+    for step in definition.get("steps", []):
+        for resolution in step.get("parameter_resolution", {}).values():
+            if resolution.get("strategy") == "shared_file":
+                return {
+                    "status": "error",
+                    "type": "shared_file_preset_not_supported",
+                }
+    return {"status": "ok"}
 
 
 def ready_item_ids_for_scope(batch, scope):
@@ -261,8 +335,12 @@ class VideoBatchUpload(View):
             )
             if auto_run_preset and not preset:
                 preset = DEFAULT_BATCH_PRESET
+            preset_definition = None
             if preset:
-                validation = validate_batch_preset(preset)
+                preset_definition, validation = resolve_saved_or_builtin_preset(
+                    request.user,
+                    preset,
+                )
                 if validation["status"] != "ok":
                     return JsonResponse(validation, status=500)
 
@@ -288,6 +366,7 @@ class VideoBatchUpload(View):
                 owner=request.user,
                 name=name,
                 preset=preset,
+                custom_preset_definition=preset_definition,
                 auto_run_preset=auto_run_preset and preset is not None,
                 source_type=(
                     VideoBatch.SOURCE_ZIP if zip_file is not None else VideoBatch.SOURCE_FILES
@@ -600,6 +679,16 @@ class VideoBatchCancel(View):
             except VideoBatch.DoesNotExist:
                 return JsonResponse({"status": "error", "type": "not_exist"}, status=500)
 
+            if batch.status not in {
+                VideoBatch.STATUS_UPLOADING,
+                VideoBatch.STATUS_INGESTING,
+                VideoBatch.STATUS_RUNNING,
+            }:
+                return JsonResponse(
+                    {"status": "error", "type": "batch_not_cancellable"},
+                    status=409,
+                )
+
             cancel_batch_work(batch)
             return JsonResponse({"status": "ok", "batch_id": batch.id.hex})
         except Exception:
@@ -615,9 +704,134 @@ class VideoBatchPresetList(View):
                     {"status": "error", "type": "not_authenticated"}, status=500
                 )
 
-            return JsonResponse({"status": "ok", "entries": list_batch_presets()})
+            built_in = [
+                {**preset, "source": "built_in", "editable": False}
+                for preset in list_batch_presets()
+            ]
+            saved = [
+                preset.to_dict()
+                for preset in SavedBatchPreset.objects.filter(owner=request.user)
+            ]
+            return JsonResponse({"status": "ok", "entries": built_in + saved})
         except Exception:
             logger.exception("Failed to list video batch presets")
+            return JsonResponse({"status": "error"}, status=500)
+
+
+class VideoBatchPresetSave(View):
+    def post(self, request):
+        try:
+            if not request.user.is_authenticated:
+                return JsonResponse(
+                    {"status": "error", "type": "not_authenticated"}, status=500
+                )
+            try:
+                data = json.loads(request.body.decode("utf-8"))
+            except Exception:
+                return JsonResponse(
+                    {"status": "error", "type": "wrong_request_body"}, status=500
+                )
+
+            name = (data.get("name") or "").strip()
+            description = (data.get("description") or "").strip()
+            if not name:
+                return JsonResponse(
+                    {"status": "error", "type": "missing_name"}, status=500
+                )
+            if len(name) > 256 or len(description) > 1024:
+                return JsonResponse(
+                    {"status": "error", "type": "value_too_long"}, status=500
+                )
+
+            normalized = normalize_custom_batch_preset(data.get("steps"), name=name)
+            if normalized["status"] != "ok":
+                return JsonResponse(normalized, status=500)
+            definition = normalized["preset"]
+            definition["description"] = description
+            reusable = validate_reusable_preset_definition(definition)
+            if reusable["status"] != "ok":
+                return JsonResponse(reusable, status=500)
+
+            preset_id = data.get("id")
+            saved_id = saved_preset_uuid(preset_id) if preset_id else None
+            if preset_id and saved_id is None:
+                return JsonResponse(
+                    {"status": "error", "type": "not_exist"}, status=500
+                )
+            if SavedBatchPreset.objects.filter(
+                owner=request.user,
+                name=name,
+            ).exclude(id=saved_id).exists():
+                return JsonResponse(
+                    {"status": "error", "type": "preset_name_exists"},
+                    status=409,
+                )
+
+            if saved_id is None:
+                saved = SavedBatchPreset.objects.create(
+                    owner=request.user,
+                    name=name,
+                    description=description,
+                    definition=definition,
+                )
+            else:
+                try:
+                    saved = SavedBatchPreset.objects.get(
+                        id=saved_id,
+                        owner=request.user,
+                    )
+                except SavedBatchPreset.DoesNotExist:
+                    return JsonResponse(
+                        {"status": "error", "type": "not_exist"}, status=500
+                    )
+                saved.name = name
+                saved.description = description
+                saved.definition = definition
+                saved.save(
+                    update_fields=[
+                        "name",
+                        "description",
+                        "definition",
+                        "update_date",
+                    ]
+                )
+
+            return JsonResponse({"status": "ok", "entry": saved.to_dict()})
+        except Exception:
+            logger.exception("Failed to save batch preset")
+            return JsonResponse({"status": "error"}, status=500)
+
+
+class VideoBatchPresetDelete(View):
+    def post(self, request):
+        try:
+            if not request.user.is_authenticated:
+                return JsonResponse(
+                    {"status": "error", "type": "not_authenticated"}, status=500
+                )
+            try:
+                data = json.loads(request.body.decode("utf-8"))
+            except Exception:
+                return JsonResponse(
+                    {"status": "error", "type": "wrong_request_body"}, status=500
+                )
+
+            saved_id = saved_preset_uuid(data.get("id"))
+            if saved_id is None:
+                return JsonResponse(
+                    {"status": "error", "type": "not_exist"}, status=500
+                )
+            deleted, _ = SavedBatchPreset.objects.filter(
+                id=saved_id,
+                owner=request.user,
+            ).delete()
+            if deleted == 0:
+                return JsonResponse(
+                    {"status": "error", "type": "not_exist"}, status=500
+                )
+            return JsonResponse({"status": "ok"})
+        except Exception:
+            logger.exception("Failed to delete batch preset")
             return JsonResponse({"status": "error"}, status=500)
 
 
@@ -695,8 +909,10 @@ class VideoBatchRunPreset(View):
             except VideoBatch.DoesNotExist:
                 return JsonResponse({"status": "error", "type": "not_exist"}, status=500)
 
-            preset = data.get("preset") or batch.preset or DEFAULT_BATCH_PRESET
-            validation = validate_batch_preset(preset)
+            preset, preset_definition, validation = resolve_batch_preset_for_run(
+                batch,
+                data.get("preset"),
+            )
             if validation["status"] != "ok":
                 return JsonResponse(validation, status=500)
 
@@ -706,9 +922,25 @@ class VideoBatchRunPreset(View):
                     status=500,
                 )
 
+            scope_result = ready_item_ids_for_scope(batch, data.get("scope"))
+            if scope_result["status"] != "ok":
+                return JsonResponse(scope_result, status=500)
+
+            if batch.plugin_runs.filter(
+                status=VideoBatchPluginRun.STATUS_RUNNING
+            ).exists():
+                return JsonResponse(
+                    {"status": "error", "type": "batch_already_running"},
+                    status=409,
+                )
+
             batch.preset = preset
-            batch.custom_preset_definition = None
-            batch.custom_preset_item_ids = None
+            batch.custom_preset_definition = preset_definition
+            batch.custom_preset_item_ids = (
+                [item_id.hex for item_id in scope_result["item_ids"]]
+                if preset_definition is not None
+                else None
+            )
             batch.save(
                 update_fields=[
                     "preset",
@@ -717,12 +949,20 @@ class VideoBatchRunPreset(View):
                     "update_date",
                 ]
             )
-            scope_result = ready_item_ids_for_scope(batch, data.get("scope"))
-            if scope_result["status"] != "ok":
-                return JsonResponse(scope_result, status=500)
+
+            reset_batch_plugin_runs(
+                batch,
+                preset,
+                scope_result["item_ids"],
+            )
 
             run_video_batch_preset.apply_async(
-                (batch.id, preset, scope_result["item_ids"], None)
+                (
+                    batch.id,
+                    preset,
+                    scope_result["item_ids"],
+                    preset_definition,
+                )
             )
             return JsonResponse({"status": "ok", "batch_id": batch.id.hex})
         except Exception:
@@ -754,6 +994,14 @@ class VideoBatchRunPluginSet(View):
                     status=500,
                 )
 
+            if batch.plugin_runs.filter(
+                status=VideoBatchPluginRun.STATUS_RUNNING
+            ).exists():
+                return JsonResponse(
+                    {"status": "error", "type": "batch_already_running"},
+                    status=409,
+                )
+
             preflight = preflight_batch_plugin_set(batch, data)
             if preflight["status"] != "ok":
                 return JsonResponse(preflight, status=500)
@@ -770,6 +1018,11 @@ class VideoBatchRunPluginSet(View):
                     "custom_preset_item_ids",
                     "update_date",
                 ]
+            )
+            reset_batch_plugin_runs(
+                batch,
+                preflight["preset_id"],
+                preflight["item_ids"],
             )
             run_video_batch_preset.apply_async(
                 (

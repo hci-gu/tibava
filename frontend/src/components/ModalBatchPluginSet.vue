@@ -8,7 +8,33 @@
       <v-card-text class="pt-4">
         <v-row>
           <v-col cols="12" md="4">
+            <v-select
+              v-model="selectedPresetId"
+              :items="presetItems"
+              item-text="name"
+              item-value="id"
+              label="Start from a preset"
+              dense
+              outlined
+              clearable
+              @change="loadPreset"
+            >
+              <template v-slot:item="{ item }">
+                <v-list-item-content>
+                  <v-list-item-title>{{ item.name }}</v-list-item-title>
+                  <v-list-item-subtitle>
+                    {{ item.editable ? "Saved preset" : "Built-in preset" }}
+                  </v-list-item-subtitle>
+                </v-list-item-content>
+              </template>
+            </v-select>
             <v-text-field v-model="name" label="Set name" dense outlined></v-text-field>
+            <v-text-field
+              v-model="description"
+              label="Description (optional)"
+              dense
+              outlined
+            ></v-text-field>
             <v-text-field
               v-model="search"
               label="Search plugins"
@@ -203,6 +229,28 @@
                 {{ validationResult.skipped_count }} videos will be skipped.
               </span>
             </v-alert>
+            <v-alert
+              v-if="presetError"
+              dense
+              outlined
+              dismissible
+              type="error"
+              class="mt-4"
+              @input="presetError = ''"
+            >
+              {{ presetError }}
+            </v-alert>
+            <v-alert
+              v-if="presetMessage"
+              dense
+              outlined
+              dismissible
+              type="success"
+              class="mt-4"
+              @input="presetMessage = ''"
+            >
+              {{ presetMessage }}
+            </v-alert>
           </v-col>
         </v-row>
       </v-card-text>
@@ -211,9 +259,43 @@
           <v-icon left>mdi-play</v-icon>
           Run
         </v-btn>
+        <v-btn
+          outlined
+          :disabled="!canSavePreset"
+          :loading="isSavingPreset"
+          @click="savePreset"
+        >
+          <v-icon left>mdi-content-save-outline</v-icon>
+          {{ selectedPreset && selectedPreset.editable ? "Update preset" : "Save preset" }}
+        </v-btn>
+        <v-btn
+          v-if="selectedPreset && selectedPreset.editable"
+          text
+          color="red"
+          @click="confirmDeletePreset = true"
+        >
+          <v-icon left>mdi-delete-outline</v-icon>
+          Delete preset
+        </v-btn>
         <v-spacer></v-spacer>
         <v-btn text @click="dialog = false">Close</v-btn>
       </v-card-actions>
+      <v-dialog v-model="confirmDeletePreset" max-width="420">
+        <v-card>
+          <v-card-title>Delete saved preset</v-card-title>
+          <v-card-text>
+            Delete "{{ selectedPreset ? selectedPreset.name : "" }}"? Existing batches
+            will retain their saved copy.
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer></v-spacer>
+            <v-btn text @click="confirmDeletePreset = false">Keep preset</v-btn>
+            <v-btn color="red" text :loading="isDeletingPreset" @click="deletePreset">
+              Delete
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
     </v-card>
   </v-dialog>
 </template>
@@ -240,7 +322,9 @@ export default {
     return {
       dialog: false,
       name: "Custom batch analysis",
+      description: "",
       search: "",
+      selectedPresetId: null,
       steps: [],
       activeStepIndex: null,
       validationResult: null,
@@ -248,10 +332,18 @@ export default {
       isSubmitting: false,
       validationTimer: null,
       isUploadingSharedInput: false,
+      isSavingPreset: false,
+      isDeletingPreset: false,
+      confirmDeletePreset: false,
+      presetMessage: "",
+      presetError: "",
     };
   },
   async mounted() {
-    await this.videoBatchStore.fetchPluginCatalog();
+    await Promise.all([
+      this.videoBatchStore.fetchPluginCatalog(),
+      this.videoBatchStore.fetchPresets(),
+    ]);
   },
   computed: {
     catalog() {
@@ -277,6 +369,20 @@ export default {
     },
     canRun() {
       return Boolean(this.validationResult) && !this.validationError && !this.isSubmitting && !this.isUploadingSharedInput;
+    },
+    presetItems() {
+      return this.videoBatchStore.presets;
+    },
+    selectedPreset() {
+      return this.presetItems.find((preset) => preset.id === this.selectedPresetId) || null;
+    },
+    canSavePreset() {
+      return Boolean(
+        this.name.trim() &&
+          this.steps.length &&
+          !this.isSavingPreset &&
+          !this.isUploadingSharedInput
+      );
     },
     ...mapStores(useVideoBatchStore),
   },
@@ -313,6 +419,50 @@ export default {
         dependencies: {},
         parameter_resolution: parameterResolution,
       };
+    },
+    loadPreset(presetId) {
+      if (!presetId) return;
+      const preset = this.presetItems.find((entry) => entry.id === presetId);
+      if (!preset) return;
+
+      this.name = preset.name;
+      this.description = preset.description || "";
+      this.steps = [];
+      const missingPlugins = [];
+      (preset.steps || []).forEach((savedStep) => {
+        const definition = this.definitionFor(savedStep.plugin);
+        if (!definition.plugin) {
+          missingPlugins.push(savedStep.plugin);
+          return;
+        }
+        const step = this.cloneStep(definition);
+        const savedValues = new Map(
+          (savedStep.parameters || []).map((parameter) => [
+            parameter.name,
+            parameter.value,
+          ])
+        );
+        step.parameters.forEach((parameter) => {
+          if (savedValues.has(parameter.name)) {
+            parameter.value = savedValues.get(parameter.name);
+          }
+        });
+        step.dependencies = { ...(savedStep.dependencies || {}) };
+        step.parameter_resolution = {
+          ...step.parameter_resolution,
+          ...JSON.parse(JSON.stringify(savedStep.parameter_resolution || {})),
+        };
+        Object.keys(step.dependencies).forEach((parameterName) => {
+          this.$delete(step.parameter_resolution, parameterName);
+        });
+        this.steps.push(step);
+      });
+      this.activeStepIndex = this.steps.length ? 0 : null;
+      this.presetMessage = "";
+      this.presetError = missingPlugins.length
+        ? `Unavailable plugins: ${missingPlugins.join(", ")}`
+        : "";
+      this.scheduleValidation();
     },
     isResolutionParameter(parameter) {
       return [
@@ -528,13 +678,73 @@ export default {
         this.isSubmitting = false;
       }
     },
+    async savePreset() {
+      this.isSavingPreset = true;
+      this.presetMessage = "";
+      this.presetError = "";
+      try {
+        const response = await this.videoBatchStore.savePreset({
+          id:
+            this.selectedPreset && this.selectedPreset.editable
+              ? this.selectedPreset.id
+              : null,
+          name: this.name,
+          description: this.description,
+          steps: this.payloadSteps(),
+        });
+        if (response.status === "ok") {
+          this.selectedPresetId = response.entry.id;
+          this.presetMessage =
+            "Preset saved. It is now available for batch uploads and preset runs.";
+        }
+      } catch (error) {
+        const data = error.response && error.response.data ? error.response.data : {};
+        if (data.type === "preset_name_exists") {
+          this.presetError = "A saved preset with this name already exists.";
+        } else if (data.type === "shared_file_preset_not_supported") {
+          this.presetError =
+            "Presets with shared image or CSV files cannot be saved yet.";
+        } else {
+          this.presetError = data.reason || data.type || "The preset could not be saved.";
+        }
+      } finally {
+        this.isSavingPreset = false;
+      }
+    },
+    async deletePreset() {
+      if (!this.selectedPreset || !this.selectedPreset.editable) return;
+      this.isDeletingPreset = true;
+      this.presetMessage = "";
+      this.presetError = "";
+      try {
+        const response = await this.videoBatchStore.deletePreset(
+          this.selectedPreset.id
+        );
+        if (response.status === "ok") {
+          this.selectedPresetId = null;
+          this.confirmDeletePreset = false;
+          this.presetMessage =
+            "Preset deleted. The current plugin settings remain in the editor.";
+        }
+      } catch (error) {
+        const data = error.response && error.response.data ? error.response.data : {};
+        this.presetError = data.reason || data.type || "The preset could not be deleted.";
+      } finally {
+        this.isDeletingPreset = false;
+      }
+    },
     reset() {
       this.name = "Custom batch analysis";
+      this.description = "";
       this.search = "";
+      this.selectedPresetId = null;
       this.steps = [];
       this.activeStepIndex = null;
       this.validationResult = null;
       this.validationError = "";
+      this.presetMessage = "";
+      this.presetError = "";
+      this.confirmDeletePreset = false;
       clearTimeout(this.validationTimer);
     },
   },
@@ -542,7 +752,10 @@ export default {
     dialog(value) {
       this.$emit("input", value);
       if (!value) this.reset();
-      if (value) this.videoBatchStore.fetchPluginCatalog();
+      if (value) {
+        this.videoBatchStore.fetchPluginCatalog();
+        this.videoBatchStore.fetchPresets();
+      }
     },
     value(value) {
       this.dialog = value;

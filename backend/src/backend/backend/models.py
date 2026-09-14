@@ -95,6 +95,43 @@ def delete_video_file(sender, instance, **kwargs):
         os.remove(path)
 
 
+class SavedBatchPreset(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="saved_batch_presets",
+    )
+    name = models.CharField(max_length=256)
+    description = models.CharField(max_length=1024, blank=True)
+    definition = models.JSONField()
+    date = models.DateTimeField(auto_now_add=True)
+    update_date = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "date"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "name"],
+                name="unique_saved_batch_preset_name_per_owner",
+            )
+        ]
+
+    @property
+    def preset_id(self):
+        return f"saved:{self.id.hex}"
+
+    def to_dict(self):
+        return {
+            "id": self.preset_id,
+            "name": self.name,
+            "description": self.description,
+            "steps": self.definition.get("steps", []),
+            "source": "saved",
+            "editable": True,
+        }
+
+
 class VideoBatch(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(

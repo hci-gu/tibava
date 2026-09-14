@@ -11,11 +11,21 @@
           </div>
         </v-col>
         <v-col cols="auto">
-          <v-btn outlined class="mr-2" @click="confirmRunPreset = true">
+          <v-btn
+            outlined
+            class="mr-2"
+            :disabled="!canRunBatchPlugins"
+            @click="openRunPresetDialog"
+          >
             <v-icon left>mdi-play</v-icon>
             Run preset
           </v-btn>
-          <v-btn outlined class="mr-2" @click="openCustomPluginSetForAll">
+          <v-btn
+            outlined
+            class="mr-2"
+            :disabled="!canRunBatchPlugins"
+            @click="openCustomPluginSetForAll"
+          >
             <v-icon left>mdi-playlist-check</v-icon>
             Custom set
           </v-btn>
@@ -37,7 +47,12 @@
             <v-icon left>mdi-replay</v-icon>
             Retry plugins
           </v-btn>
-          <v-btn outlined class="mr-2" @click="confirmCancel = true">
+          <v-btn
+            outlined
+            class="mr-2"
+            :disabled="!canCancelBatch"
+            @click="confirmCancel = true"
+          >
             <v-icon left>mdi-stop-circle-outline</v-icon>
             Cancel
           </v-btn>
@@ -116,7 +131,7 @@
               small
               outlined
               class="mr-2"
-              :disabled="!readySelectedItemIds.length"
+              :disabled="!readySelectedItemIds.length || !canRunBatchPlugins"
               @click="openCustomPluginSetForSelection"
             >
               <v-icon left small>mdi-playlist-check</v-icon>
@@ -175,7 +190,13 @@
             <v-btn icon small title="Filter folder" @click.stop="folderFilter = group">
               <v-icon small>mdi-filter-outline</v-icon>
             </v-btn>
-            <v-btn icon small title="Run plugins for folder" @click.stop="openCustomPluginSetForFolder(group)">
+            <v-btn
+              icon
+              small
+              title="Run plugins for folder"
+              :disabled="!canRunBatchPlugins"
+              @click.stop="openCustomPluginSetForFolder(group)"
+            >
               <v-icon small>mdi-playlist-play</v-icon>
             </v-btn>
           </td>
@@ -228,6 +249,15 @@
         <v-card>
           <v-card-title>Run preset</v-card-title>
           <v-card-text>
+            <v-select
+              v-model="presetToRun"
+              :items="runPresetItems"
+              item-text="name"
+              item-value="id"
+              label="Preset"
+              outlined
+              dense
+            ></v-select>
             <v-radio-group v-model="presetScopeMode" dense>
               <v-radio label="All ready videos" value="all"></v-radio>
               <v-radio
@@ -250,7 +280,12 @@
           <v-card-actions>
             <v-spacer></v-spacer>
             <v-btn text @click="confirmRunPreset = false">Cancel</v-btn>
-            <v-btn color="primary" text @click="runPreset">Run</v-btn>
+            <v-btn
+              color="primary"
+              text
+              :disabled="!canRunBatchPlugins || !presetToRun"
+              @click="runPreset"
+            >Run</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -270,7 +305,12 @@
           <v-card-actions>
             <v-spacer></v-spacer>
             <v-btn text @click="confirmCancel = false">Keep running</v-btn>
-            <v-btn color="warning" text @click="cancelBatch">Cancel batch</v-btn>
+            <v-btn
+              color="warning"
+              text
+              :disabled="!canCancelBatch"
+              @click="cancelBatch"
+            >Cancel batch</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -303,6 +343,7 @@ export default {
       search: "",
       selectedItemIds: [],
       presetScopeMode: "all",
+      presetToRun: null,
       showCustomPluginSet: false,
       customPluginItemIds: [],
       customPluginScopeLabel: "all ready videos",
@@ -341,10 +382,29 @@ export default {
     },
     presetLabel() {
       if (!this.batch || !this.batch.preset) return "";
+      if (this.batch.custom_preset_definition) {
+        return this.batch.custom_preset_definition.name || "Custom plugin set";
+      }
       const preset = this.videoBatchStore.presets.find(
         (entry) => entry.id === this.batch.preset
       );
       return preset ? preset.name : this.batch.preset;
+    },
+    runPresetItems() {
+      const presets = [...this.videoBatchStore.presets];
+      if (
+        this.batch &&
+        this.batch.preset &&
+        this.batch.custom_preset_definition &&
+        !presets.some((preset) => preset.id === this.batch.preset)
+      ) {
+        presets.push({
+          id: this.batch.preset,
+          name: this.presetLabel,
+          source: "batch",
+        });
+      }
+      return presets;
     },
     filteredItems() {
       if (!this.batch || !this.batch.items) return [];
@@ -480,6 +540,21 @@ export default {
           )
       );
     },
+    canRunBatchPlugins() {
+      return Boolean(
+        this.hasReadyVideos &&
+          this.batch &&
+          !["UPLOADING", "INGESTING", "RUNNING", "CANCELLED"].includes(
+            this.batch.status
+          )
+      );
+    },
+    canCancelBatch() {
+      return Boolean(
+        this.batch &&
+          ["UPLOADING", "INGESTING", "RUNNING"].includes(this.batch.status)
+      );
+    },
     statusSummaries() {
       const itemStatuses = ["PENDING", "INGESTING", "READY", "ERROR"];
       const pluginStatuses = ["PENDING", "RUNNING", "DONE", "ERROR", "SKIPPED"];
@@ -585,9 +660,16 @@ export default {
       this.confirmRunPreset = false;
       await this.videoBatchStore.runScopedPreset({
         batchId: this.batchId,
+        preset: this.presetToRun,
         scope: this.scopeForPresetRun(),
       });
       this.fetchBatch();
+    },
+    openRunPresetDialog() {
+      this.presetToRun =
+        (this.batch && this.batch.preset) ||
+        (this.runPresetItems.length ? this.runPresetItems[0].id : null);
+      this.confirmRunPreset = true;
     },
     scopeForPresetRun() {
       if (this.presetScopeMode === "selected") {

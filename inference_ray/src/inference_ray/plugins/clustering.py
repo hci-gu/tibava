@@ -53,8 +53,11 @@ class Clustering(
             inputs["embeddings"] as embeddings,
             data_manager.create_data("ClusterData") as output_data,
         ):
-            np_embeddings = np.squeeze(
-                np.asarray([em.embedding for em in embeddings.embeddings])
+            np_embeddings = np.vstack(
+                [
+                    np.asarray(em.embedding).reshape(1, -1)
+                    for em in embeddings.embeddings
+                ]
             )
 
             metric = "cosine"
