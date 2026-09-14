@@ -10,6 +10,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils.text import slugify
 from django.views import View
 
+from backend.eaf_filter import EafFilterError, filter_eaf_xml
 from backend.models import (
     SavedBatchPreset,
     VideoBatch,
@@ -563,7 +564,16 @@ class VideoBatchExportElan(View):
                         item.video,
                         linked_file_path=linked_file_path,
                     )
-                    archive.writestr(archive_path, elan)
+                    filtered_elan, filter_result = filter_eaf_xml(elan)
+                    logger.info(
+                        "Filtered batch ELAN export item_id=%s groups=%d "
+                        "cluster_groups=%d warnings=%d",
+                        item.id.hex,
+                        len(filter_result.groups),
+                        len(filter_result.cluster_groups),
+                        len(filter_result.warnings),
+                    )
+                    archive.writestr(archive_path, filtered_elan)
                     report["exported"].append(
                         {"item_id": item.id.hex, "path": archive_path}
                     )
@@ -573,6 +583,17 @@ class VideoBatchExportElan(View):
                             "item_id": item.id.hex,
                             "original_path": item.original_path,
                             "reason": exc.code,
+                        }
+                    )
+                except EafFilterError:
+                    logger.exception(
+                        "Failed to filter ELAN for batch item %s", item.id.hex
+                    )
+                    report["failed"].append(
+                        {
+                            "item_id": item.id.hex,
+                            "original_path": item.original_path,
+                            "reason": "eaf_filter_failed",
                         }
                     )
                 except Exception:

@@ -857,6 +857,13 @@ class VideoBatchAPIDatabaseTests(TestCase):
             self.assertTrue(all("ANNOTATION_DOCUMENT" in elan for elan in elan_files))
             self.assertTrue(any("clip.mp4" in elan for elan in elan_files))
             self.assertTrue(any("clip.mov" in elan for elan in elan_files))
+            self.assertTrue(
+                all(
+                    "<ANNOTATION_VALUE>0</ANNOTATION_VALUE>" in elan
+                    for elan in elan_files
+                )
+            )
+            self.assertTrue(all(">value:0<" not in elan for elan in elan_files))
 
     def test_batch_elan_export_includes_report_for_partial_failures(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Partial")
