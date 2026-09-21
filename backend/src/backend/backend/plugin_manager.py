@@ -52,6 +52,7 @@ class PluginManager:
         parameters: List = None,
         run_async: bool = True,
         dry_run: bool = False,
+        on_created=None,
         **kwargs,
     ):
         if parameters is None:
@@ -79,6 +80,8 @@ class PluginManager:
                 video=video, type=plugin, status=PluginRun.STATUS_QUEUED
             )
             result["plugin_run"] = plugin_run.id.hex
+            if on_created is not None:
+                on_created(plugin_run)
         if run_async:
             run_plugin.apply_async(
                 (

@@ -5,17 +5,19 @@ import numpy as np
 
 def parse_meta_av(path, **kwargs):
     try:
-        fh = av.open(path)
-        stream = fh.streams.video[0]
-        frame = next(fh.decode(video=0))
-        frame = frame.reformat(format="rgb24")
-        return {
-            "fps": stream.average_rate,
-            "width": frame.width,
-            "height": frame.height,
-            "size": (frame.width, frame.height),
-            "duration": float(stream.duration * stream.time_base),
-        }
+        with av.open(path) as fh:
+            stream = fh.streams.video[0]
+            frame = next(fh.decode(video=0))
+            duration = (float(stream.duration * stream.time_base)
+                        if stream.duration is not None
+                        else float(fh.duration / av.time_base) if fh.duration else 0.0)
+            return {
+                "fps": stream.average_rate or stream.guessed_rate,
+                "width": frame.width,
+                "height": frame.height,
+                "size": (frame.width, frame.height),
+                "duration": duration,
+            }
 
     except:
         return None
@@ -56,6 +58,10 @@ class VideoDecoder:
         self._ref_id = ref_id
 
         self._meta = parse_meta_av(path)
+        if not self._meta or not self._meta.get("fps"):
+            raise ValueError("Video has no decodable frames or valid frame rate")
+        if hasattr(path, "seek"):
+            path.seek(0)
 
         self._size = self._meta.get("size")
 
@@ -81,13 +87,7 @@ class VideoDecoder:
             filter_sequence.append(
                 ("scale", {"width": f"{res[0]}", "height": f"{res[1]}"})
             )
-        video_reader = iio.imiter(
-            self._path,
-            plugin="pyav",
-            format="rgb24",
-            filter_sequence=filter_sequence,
-            **self._kwargs,
-        )
+        video_reader = self._filtered_frames(filter_sequence)
         fps = self._real_fps if self._fps is None else self._fps
         for i, frame in enumerate(video_reader):
             yield {
@@ -98,8 +98,39 @@ class VideoDecoder:
                 "delta_time": float(1 / fps),
             }
 
+    def _filtered_frames(self, filters):
+        # Build from the first decoded frame, not the stream header: some valid
+        # codecs do not expose a pixel format until decoding has started.
+        if hasattr(self._path, "seek"):
+            self._path.seek(0)
+        with av.open(self._path) as container:
+            graph = None
+            for frame in container.decode(video=0):
+                if graph is None:
+                    graph = av.filter.Graph()
+                    previous = graph.add_buffer(template=frame)
+                    for name, options in filters:
+                        node = graph.add(name, **options)
+                        previous.link_to(node)
+                        previous = node
+                    previous.link_to(graph.add("buffersink"))
+                    graph.configure()
+                graph.push(frame)
+                yield from self._drain_filter(graph)
+            if graph is not None:
+                graph.push(None)
+                yield from self._drain_filter(graph)
+
+    @staticmethod
+    def _drain_filter(graph):
+        while True:
+            try:
+                yield graph.pull().to_ndarray(format="rgb24")
+            except (av.error.BlockingIOError, av.error.EOFError):
+                return
+
     def __len__(self):
-        return self.duration() * self.fps()
+        return max(0, round(self.duration() * self.fps()))
 
     def fps(self):
         return float(self._real_fps if self._fps is None else self._fps)
@@ -127,7 +158,7 @@ class VideoBatcher:
                 }
                 cache = []
 
-        if len(cache) >= self.batch_size:
+        if cache:
             yield {
                 "time": [x["time"] for x in cache],
                 "index": [x["index"] for x in cache],

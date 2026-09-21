@@ -55,7 +55,7 @@ class ThumbnailGenerator(
 
                 num_frames = video_decoder.duration() * video_decoder.fps()
                 for i, frame in enumerate(video_decoder):
-                    self.update_callbacks(callbacks, progress=i / num_frames)
+                    self.update_callbacks(callbacks, progress=min(i / num_frames, 1.0) if num_frames else 0.0)
 
                     output_data.save_image(
                         frame.get("frame"),

@@ -139,11 +139,9 @@ class TransnetShotdetection(
     ) -> Dict[str, Data]:
         import torch
 
-        configured_device = self.config.get("model_device", "auto")
-        if configured_device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            device = configured_device
+        # TransNet must run on CPU so that the scripted model and input tensors
+        # always use the same device, even in the CUDA deployment.
+        device = "cpu"
 
         if self.model is None:
             self.model = torch.jit.load(

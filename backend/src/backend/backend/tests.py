@@ -172,6 +172,34 @@ class BatchZipTests(SimpleTestCase):
             self.assertEqual(entries[0]["original_path"], "folder/sub/video.mp4")
             self.assertTrue(entries[0]["source_path"].exists())
 
+    @override_settings(MAX_BATCH_FILES=None)
+    def test_extract_zip_videos_has_no_default_file_count_limit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_path = Path(tmp_dir) / "batch.zip"
+            output_dir = Path(tmp_dir) / "out"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                for index in range(501):
+                    archive.writestr(f"video-{index}.mp4", b"video")
+
+            entries = extract_zip_videos(zip_path, output_dir)
+
+            self.assertEqual(len(entries), 501)
+            self.assertTrue(all(entry["status"] == "ok" for entry in entries))
+
+    def test_extract_zip_videos_honors_explicit_file_count_limit(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_path = Path(tmp_dir) / "batch.zip"
+            output_dir = Path(tmp_dir) / "out"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("first.mp4", b"video")
+                archive.writestr("second.mp4", b"video")
+
+            entries = extract_zip_videos(zip_path, output_dir, max_files=1)
+
+            self.assertEqual(entries[0]["status"], "ok")
+            self.assertEqual(entries[1]["status"], "error")
+            self.assertEqual(entries[1]["ingest_error"], "too_many_files")
+
     def test_extract_zip_videos_raises_for_malformed_archives(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             zip_path = Path(tmp_dir) / "batch.zip"
@@ -582,7 +610,7 @@ class VideoBatchViewTests(SimpleTestCase):
 
     def test_cancel_batch_marks_batch_cancelled(self):
         batch_id = uuid.uuid4()
-        fake_batch = SimpleNamespace(id=batch_id)
+        fake_batch = SimpleNamespace(id=batch_id, status=VideoBatch.STATUS_RUNNING)
         request = RequestFactory().post(
             "/video/batch/cancel",
             data=f'{{"id":"{batch_id.hex}"}}',
@@ -1555,7 +1583,86 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(args[0][3], batch.custom_preset_definition)
 
 
+@override_settings(BATCH_PAUSE_FILE="/tmp/tibava-test-unpaused-does-not-exist")
 class VideoBatchTaskDatabaseTests(TestCase):
+    def test_retry_restores_dependency_skips_but_preserves_results_and_cancellations(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Retry", preset=DEFAULT_BATCH_PRESET)
+        item = VideoBatchItem.objects.create(batch=batch, video=self.make_video())
+        trackers = [VideoBatchPluginRun.objects.create(
+            batch=batch, item=item, preset=DEFAULT_BATCH_PRESET, step_index=index,
+            plugin=f"plugin_{index}", status=status, error=error,
+        ) for index, (status, error) in enumerate([
+            ("E", "plugin_run_failed"), ("S", "dependency_failed"),
+            ("D", ""), ("S", "cancelled"),
+        ])]
+        request = RequestFactory().post("/video/batch/retryFailedPluginSteps",
+            data=json.dumps({"id": batch.id.hex}), content_type="application/json")
+        request.user = self.user
+        with patch("backend.views.video_batch.run_video_batch_preset.apply_async"), patch(
+            "backend.views.video_batch.user_has_active_batch_capacity", return_value=True
+        ):
+            response = VideoBatchRetryFailedPluginSteps.as_view()(request)
+        self.assertEqual(response.status_code, 200)
+        for tracker in trackers:
+            tracker.refresh_from_db()
+        self.assertEqual([tracker.status for tracker in trackers], ["P", "P", "D", "S"])
+        self.assertEqual(trackers[-1].error, "cancelled")
+
+    def test_pause_preserves_batch_and_does_not_dispatch(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Paused")
+        with tempfile.TemporaryDirectory() as directory:
+            pause_file = Path(directory) / "paused"
+            pause_file.touch()
+            with override_settings(BATCH_PAUSE_FILE=str(pause_file)), patch(
+                "backend.tasks.batch.run_video_batch_plugin_step.apply_async"
+            ) as dispatch:
+                run_video_batch_preset(batch.id, DEFAULT_BATCH_PRESET)
+                ingest_video_batch(batch.id)
+            dispatch.assert_not_called()
+        batch.refresh_from_db()
+        self.assertEqual(batch.plugin_runs.count(), 0)
+        self.assertEqual(batch.status, VideoBatch.STATUS_UPLOADING)
+
+    def test_bulk_initialization_is_idempotent_and_constant_query_count(self):
+        from backend.tasks.batch import ensure_batch_plugin_run_rows
+        batch = VideoBatch.objects.create(owner=self.user, name="Bulk")
+        video = self.make_video()
+        VideoBatchItem.objects.bulk_create([
+            VideoBatchItem(batch=batch, video=video, original_filename=f"{i}.mp4",
+                           ingest_status=VideoBatchItem.STATUS_READY)
+            for i in range(1574)
+        ])
+        preset = {"steps": [{"plugin": f"plugin_{i}"} for i in range(13)]}
+        ensure_batch_plugin_run_rows(batch, "bulk-test", preset)
+        self.assertEqual(batch.plugin_runs.count(), 20462)
+        with self.assertNumQueries(2):
+            ensure_batch_plugin_run_rows(batch, "bulk-test", preset)
+        self.assertEqual(batch.plugin_runs.count(), 20462)
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        import time
+        started = time.monotonic()
+        with patch("backend.tasks.batch.resolve_preset_definition", return_value={"status": "ok", "preset": preset}), patch(
+            "backend.tasks.batch.run_video_batch_plugin_step.apply_async"
+        ) as dispatch, CaptureQueriesContext(connection) as queries:
+            run_video_batch_preset(batch.id, "bulk-test")
+        self.assertEqual(dispatch.call_count, 4)
+        self.assertLess(len(queries), 75)
+        print(f"Large batch scheduler: {len(queries)} queries, {time.monotonic() - started:.3f}s")
+
+    def test_dispatch_failure_releases_capacity(self):
+        from backend.tasks.batch import dispatch_batch_plugin_step
+        batch = VideoBatch.objects.create(owner=self.user, name="Dispatch failure")
+        item = VideoBatchItem.objects.create(batch=batch, video=self.make_video())
+        tracker = VideoBatchPluginRun.objects.create(
+            batch=batch, item=item, preset=DEFAULT_BATCH_PRESET, plugin="thumbnail",
+        )
+        with patch("backend.tasks.batch.run_video_batch_plugin_step.apply_async", side_effect=RuntimeError("broker")):
+            with self.assertRaises(RuntimeError):
+                dispatch_batch_plugin_step(tracker, batch, DEFAULT_BATCH_PRESET)
+        tracker.refresh_from_db()
+        self.assertEqual(tracker.status, VideoBatchPluginRun.STATUS_PENDING)
+
     def setUp(self):
         self.user = get_user_model().objects.create_user(
             username="task-owner@example.com",
@@ -1644,7 +1751,7 @@ class VideoBatchTaskDatabaseTests(TestCase):
         )
 
         class FakePluginManager:
-            def __call__(self, plugin, video, user, parameters, run_async):
+            def __call__(self, plugin, video, user, parameters, run_async, on_created=None):
                 plugin_run = PluginRun.objects.create(
                     video=video,
                     type=plugin,
@@ -1745,7 +1852,7 @@ class VideoBatchTaskDatabaseTests(TestCase):
         calls = []
 
         class FakePluginManager:
-            def __call__(self, plugin, video, user, parameters, run_async):
+            def __call__(self, plugin, video, user, parameters, run_async, on_created=None):
                 calls.append((plugin, parameters))
                 plugin_run = PluginRun.objects.create(
                     video=video,
@@ -2120,7 +2227,7 @@ class VideoBatchTaskDatabaseTests(TestCase):
         )
 
         class FakePluginManager:
-            def __call__(self, plugin, video, user, parameters, run_async):
+            def __call__(self, plugin, video, user, parameters, run_async, on_created=None):
                 plugin_run = PluginRun.objects.create(
                     video=video,
                     type=plugin,
@@ -2168,7 +2275,7 @@ class VideoBatchTaskDatabaseTests(TestCase):
         )
 
         class FakePluginManager:
-            def __call__(self, plugin, video, user, parameters, run_async):
+            def __call__(self, plugin, video, user, parameters, run_async, on_created=None):
                 batch.status = VideoBatch.STATUS_CANCELLED
                 batch.save(update_fields=["status", "update_date"])
                 plugin_run = PluginRun.objects.create(

@@ -145,7 +145,7 @@ class WhisperX(
                 language = transcription["language"]
                 if self.alignment_model is None or self.alignment_language != language:
                     self.alignment_model, self.metadata = whisperx.load_align_model(
-                        language_code=language, device="cpu"
+                        language_code=language, device=device
                     )
                     self.alignment_language = language
 
@@ -154,7 +154,7 @@ class WhisperX(
                     self.alignment_model,
                     self.metadata,
                     y,
-                    "cpu",
+                    device,
                     return_char_alignments=False,
                 )
 

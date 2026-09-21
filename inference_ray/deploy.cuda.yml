@@ -13,9 +13,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           runtime_env:
             uv:
@@ -29,9 +32,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           runtime_env:
             uv:
@@ -49,9 +55,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           runtime_env:
             uv:
@@ -69,9 +78,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           runtime_env:
             uv:
@@ -91,9 +103,12 @@ applications:
         pretrained: laion5b_s13b_b90k
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -114,9 +129,12 @@ applications:
         pretrained: laion5b_s13b_b90k
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -137,9 +155,12 @@ applications:
         pretrained: laion5b_s13b_b90k
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -160,9 +181,12 @@ applications:
         pretrained: laion5b_s13b_b90k
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -181,9 +205,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           runtime_env:
             uv:
@@ -197,9 +224,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           runtime_env:
             uv:
@@ -215,9 +245,12 @@ applications:
         model_path: /models/deepface_emotion/facial_expression_model.onnx
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -236,9 +269,12 @@ applications:
         model_path: /models/insightface_detector_torch/scrfd_10g_bnkps.pth
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.05
           runtime_env:
@@ -256,9 +292,12 @@ applications:
         model_path: /models/insightface_detector_torch/scrfd_10g_bnkps.pth
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -275,9 +314,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           runtime_env:
@@ -293,9 +335,12 @@ applications:
         model_path: /models/insightface_feature_extraction/w600k_r50.onnx
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.05
           runtime_env:
@@ -314,9 +359,12 @@ applications:
         model_path: /models/insightface_feature_extraction/w600k_r50.onnx
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -334,9 +382,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
   - name: places_classifier
     route_prefix: /places_classifier
     import_path: inference_ray.main:app_builder
@@ -349,9 +400,12 @@ applications:
         hierarchy_file: /models/places_classification/scene_hierarchy_places365.csv
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -369,9 +423,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
 
   - name: shot_annotator
     route_prefix: /shot_annotator
@@ -382,9 +439,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
   - name: shot_density
     route_prefix: /shot_density
     import_path: inference_ray.main:app_builder
@@ -394,9 +454,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           runtime_env:
             uv:
@@ -410,9 +473,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
   - name: shot_type_classifier
     route_prefix: /shot_type_classifier
     import_path: inference_ray.main:app_builder
@@ -423,9 +489,12 @@ applications:
         model_path: /models/shot_type_classification/shot_type_classifier_e9-s3199_gpu.pt
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -440,9 +509,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
 
   - name: transnet_shotdetection
     route_prefix: /transnet_shotdetection
@@ -452,13 +524,17 @@ applications:
       data_path: /data
       params:
         model_path: /models/transnet_shotdetection/transnet.pt
-        model_device: cpu
+        model_device: cuda
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
+          num_gpus: 0.1
           runtime_env:
             pip:
               - torch==2.11.0
@@ -472,9 +548,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
 
   - name: aggregate_list_scalar_per_time
     route_prefix: /aggregate_list_scalar_per_time
@@ -485,9 +564,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
 
   - name: aggregate_scalar
     route_prefix: /aggregate_scalar
@@ -498,9 +580,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
 
   - name: cosine_similarity
     route_prefix: /cosine_similarity
@@ -511,9 +596,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           runtime_env:
             pip:
@@ -528,9 +616,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
   - name: whisper
     route_prefix: /whisper
     import_path: inference_ray.main:app_builder
@@ -541,9 +632,12 @@ applications:
         model: openai/whisper-medium
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -563,9 +657,12 @@ applications:
         model_path: /models/xclip/xclip_16_8_video.onnx
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -586,9 +683,12 @@ applications:
         model_path: /models/xclip/xclip_16_8_text.onnx
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -610,9 +710,12 @@ applications:
         sim_model_path: /models/xclip/xclip_16_8_sim.onnx
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -631,9 +734,12 @@ applications:
       data_path: /data
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -647,9 +753,12 @@ applications:
       data_path: /data
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
           runtime_env:
@@ -664,9 +773,12 @@ applications:
       data_path: /data
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           runtime_env:
@@ -680,9 +792,12 @@ applications:
       data_path: /data
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
 
@@ -694,9 +809,12 @@ applications:
       data_path: /data
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
-          max_replicas: 20
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
 
@@ -710,9 +828,12 @@ applications:
         model: Salesforce/instructblip-flan-t5-xl
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           # num_cpus: 2
           num_gpus: 0.1
@@ -736,9 +857,12 @@ applications:
         model: Salesforce/instructblip-flan-t5-xl
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           # num_cpus: 2
           num_gpus: 0.1
@@ -761,8 +885,12 @@ applications:
       data_path: /data
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 1
   - name: invert_scalar
@@ -773,8 +901,12 @@ applications:
       data_path: /data
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 1
 
@@ -786,8 +918,12 @@ applications:
       data_path: /data
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
+          max_replicas: 4
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 1
           runtime_env:
@@ -815,8 +951,12 @@ applications:
         model_path: /models/ocr/yolov7_text_det_dyn_input.onnx
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1
 
@@ -829,9 +969,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           runtime_env:
@@ -847,9 +990,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           num_gpus: 0.05
@@ -867,9 +1013,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           num_gpus: 0.05
@@ -887,9 +1036,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           num_gpus: 0.05
@@ -907,9 +1059,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           num_gpus: 0.1
@@ -926,9 +1081,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           num_gpus: 0.05
@@ -948,9 +1106,14 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
+          num_gpus: 0.1
           num_cpus: 2
           runtime_env:
             pip:
@@ -968,9 +1131,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           num_gpus: 0.05
@@ -992,9 +1158,12 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_cpus: 2
           num_gpus: 0.05
@@ -1014,9 +1183,14 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
+          num_gpus: 0.1
           num_cpus: 2
           runtime_env:
             pip:
@@ -1031,9 +1205,14 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
+          num_gpus: 0.1
           num_cpus: 2
           runtime_env:
             pip:
@@ -1047,9 +1226,14 @@ applications:
       params: {}
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
           min_replicas: 0
+          max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
+          num_gpus: 0.1
           num_cpus: 2
           runtime_env:
             pip:
@@ -1071,8 +1255,11 @@ applications:
       data_path: /data
     deployments:
       - name: Deployment
+        max_ongoing_requests: 1
         autoscaling_config:
-          min_replicas: 1
+          min_replicas: 0
           max_replicas: 1
+          target_ongoing_requests: 1
+          downscale_delay_s: 60
         ray_actor_options:
           num_gpus: 0.1

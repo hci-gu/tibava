@@ -2,9 +2,12 @@ import logging
 from pathlib import Path
 import time
 import zipfile
+import uuid
+from functools import wraps
 
 from celery import shared_task
 from django.conf import settings
+from django.db import connection
 from django.utils import timezone
 
 from backend.models import (
@@ -34,6 +37,44 @@ from backend.utils.video_ingest import PathUploadFile, ingest_video_file
 
 
 logger = logging.getLogger(__name__)
+
+
+def batch_processing_paused():
+    """Shared durable maintenance switch, checked even by already-running workers."""
+    return Path(settings.BATCH_PAUSE_FILE).exists()
+
+
+def serialized_scheduler(function):
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        # Session lock: claims are committed before publishing to Celery. All batch
+        # schedulers share this lock so the global and user limits cannot race.
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_lock(74219031)")
+        try:
+            return function(*args, **kwargs)
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock(74219031)")
+    return wrapped
+
+
+def serialized_plugin_step(function):
+    @wraps(function)
+    def wrapped(self, tracker_id, *args, **kwargs):
+        # Prevent concurrent/redelivered messages from executing a plugin twice.
+        key = uuid.UUID(str(tracker_id)).int & 0x7fffffff
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_try_advisory_lock(74219032, %s)", [key])
+            acquired = cursor.fetchone()[0]
+        if not acquired:
+            return
+        try:
+            return function(self, tracker_id, *args, **kwargs)
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT pg_advisory_unlock(74219032, %s)", [key])
+    return wrapped
 
 
 def ingest_batch_item(item):
@@ -229,16 +270,23 @@ def resolve_preset_definition(preset_id=None, preset_definition=None):
 
 
 def ensure_batch_plugin_run_rows(batch, preset_id, preset, item_ids=None):
-    for item in scoped_ready_items(batch, item_ids):
+    existing = set(VideoBatchPluginRun.objects.filter(
+        batch=batch, preset=preset_id,
+    ).values_list("item_id", "step_index", "plugin"))
+    missing = []
+    for item_id in scoped_ready_items(batch, item_ids).values_list("id", flat=True):
         for step_index, step in enumerate(preset["steps"]):
-            VideoBatchPluginRun.objects.get_or_create(
+            if (item_id, step_index, step["plugin"]) in existing:
+                continue
+            missing.append(VideoBatchPluginRun(
                 batch=batch,
-                item=item,
+                item_id=item_id,
                 preset=preset_id,
                 step_index=step_index,
                 plugin=step["plugin"],
-                defaults={"status": VideoBatchPluginRun.STATUS_PENDING},
-            )
+                status=VideoBatchPluginRun.STATUS_PENDING,
+            ))
+    VideoBatchPluginRun.objects.bulk_create(missing, batch_size=1000)
 
 
 def get_running_batch_plugin_counts(batch):
@@ -402,6 +450,8 @@ def next_schedulable_tracker(batch, item, preset_id, preset):
 
 
 def dispatch_batch_plugin_step(tracker, batch, preset_id, item_ids=None, preset_definition=None):
+    if batch_processing_paused():
+        return False
     updated = VideoBatchPluginRun.objects.filter(
         id=tracker.id,
         status=VideoBatchPluginRun.STATUS_PENDING,
@@ -418,9 +468,15 @@ def dispatch_batch_plugin_step(tracker, batch, preset_id, item_ids=None, preset_
             preset_definition=preset_definition,
         )
     else:
-        run_video_batch_plugin_step.apply_async(
-            (tracker.id, batch.id, preset_id, item_ids, preset_definition)
-        )
+        try:
+            run_video_batch_plugin_step.apply_async(
+                (tracker.id, batch.id, preset_id, item_ids, preset_definition)
+            )
+        except Exception:
+            VideoBatchPluginRun.objects.filter(id=tracker.id, status="R").update(
+                status="P", error="dispatch_failed",
+            )
+            raise
     return True
 
 
@@ -446,6 +502,8 @@ def finalize_batch_plugin_schedule(batch):
 
 @shared_task(bind=True)
 def ingest_video_batch(self, batch_id):
+    if batch_processing_paused():
+        return
     start_time = time.monotonic()
     try:
         batch = VideoBatch.objects.get(id=batch_id)
@@ -477,6 +535,8 @@ def ingest_video_batch(self, batch_id):
             VideoBatchItem.STATUS_ERROR,
         ]
     ).order_by("date"):
+        if batch_processing_paused():
+            return
         if is_batch_cancelled(batch):
             cancel_batch_work(batch)
             return
@@ -522,6 +582,7 @@ def ingest_video_batch(self, batch_id):
 
 
 @shared_task(bind=True)
+@serialized_scheduler
 def run_video_batch_preset(
     self,
     batch_id,
@@ -529,6 +590,8 @@ def run_video_batch_preset(
     item_ids=None,
     preset_definition=None,
 ):
+    if batch_processing_paused():
+        return
     scheduler_start_time = time.monotonic()
     try:
         batch = VideoBatch.objects.get(id=batch_id)
@@ -582,17 +645,11 @@ def run_video_batch_preset(
             break
 
         dispatched = False
-        items = list(scoped_ready_items(batch, item_ids))
-        schedulable = []
-        for item in items:
-            tracker = next_schedulable_tracker(batch, item, preset_id, preset)
-            if tracker is not None:
-                schedulable.append(tracker)
-
+        items = scoped_ready_items(batch, item_ids)
         lowest_unfinished_step = (
             VideoBatchPluginRun.objects.filter(
                 batch=batch,
-                item_id__in=[item.id for item in items],
+                item_id__in=items.values("id"),
                 preset=preset_id,
                 status__in=[
                     VideoBatchPluginRun.STATUS_PENDING,
@@ -604,8 +661,17 @@ def run_video_batch_preset(
             .first()
         )
 
-        for tracker in schedulable:
-            if tracker.step_index != lowest_unfinished_step:
+        candidates = VideoBatchPluginRun.objects.filter(
+            batch=batch, preset=preset_id, item_id__in=items.values("id"),
+            step_index=lowest_unfinished_step, status=VideoBatchPluginRun.STATUS_PENDING,
+        ).select_related("item", "item__video").order_by("item__original_path", "id")
+        # Inspect only enough candidates to fill the available slots. Do not
+        # rescan every video and every completed output after each completion.
+        examined = False
+        for candidate in candidates[:max(capacity, 32)]:
+            examined = True
+            tracker = next_schedulable_tracker(batch, candidate.item, preset_id, preset)
+            if tracker is None:
                 continue
 
             tracker_dispatched = dispatch_batch_plugin_step(
@@ -622,7 +688,7 @@ def run_video_batch_preset(
             if capacity <= 0:
                 break
 
-        if not dispatched:
+        if batch_processing_paused() or (not dispatched and not examined):
             break
 
     if is_batch_cancelled(batch):
@@ -640,6 +706,7 @@ def run_video_batch_preset(
 
 
 @shared_task(bind=True)
+@serialized_plugin_step
 def run_video_batch_plugin_step(
     self,
     tracker_id,
@@ -661,6 +728,10 @@ def run_video_batch_plugin_step(
         return
 
     batch = tracker.batch
+    if batch_processing_paused():
+        return
+    if tracker.status != VideoBatchPluginRun.STATUS_RUNNING:
+        return
     if batch.status == VideoBatch.STATUS_CANCELLED:
         cancel_batch_work(batch)
         return
@@ -715,13 +786,22 @@ def run_video_batch_plugin_step(
     parameters = resolved["parameters"]
 
     plugin_manager = PluginManager()
-    result = plugin_manager(
-        step["plugin"],
-        user=batch.owner,
-        video=tracker.item.video,
-        run_async=False,
-        parameters=parameters,
-    )
+    def link_plugin_run(plugin_run):
+        VideoBatchPluginRun.objects.filter(id=tracker.id).update(plugin_run=plugin_run)
+
+    try:
+        result = plugin_manager(
+            step["plugin"],
+            user=batch.owner,
+            video=tracker.item.video,
+            run_async=False,
+            parameters=parameters,
+            on_created=link_plugin_run,
+        )
+    except Exception:
+        logger.exception("Unexpected batch plugin error tracker_id=%s", tracker.id)
+        tracker.refresh_from_db(fields=["plugin_run"])
+        result = {"status": False, "type": "plugin_run_failed"}
     plugin_run_id = result.get("plugin_run")
     if plugin_run_id:
         try:

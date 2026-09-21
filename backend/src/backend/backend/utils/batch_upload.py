@@ -10,7 +10,7 @@ from django.conf import settings
 from backend.utils.video_ingest import ALLOWED_VIDEO_EXTENSIONS, is_allowed_video_extension
 
 
-DEFAULT_MAX_BATCH_FILES = 500
+DEFAULT_MAX_BATCH_FILES = None
 DEFAULT_MAX_BATCH_TOTAL_SIZE = 250 * 1024 * 1024 * 1024
 DEFAULT_MAX_ACTIVE_BATCH_INGESTS_PER_USER = 1
 DEFAULT_MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH = 1
@@ -120,9 +120,12 @@ def extract_zip_videos(
     max_file_size=None,
     allowed_extensions=ALLOWED_VIDEO_EXTENSIONS,
 ):
-    max_files = max_files or get_max_batch_files()
-    max_total_size = max_total_size or get_max_batch_total_size()
-    max_file_size = max_file_size or getattr(settings, "MAX_BATCH_FILE_SIZE", None)
+    if max_files is None:
+        max_files = get_max_batch_files()
+    if max_total_size is None:
+        max_total_size = get_max_batch_total_size()
+    if max_file_size is None:
+        max_file_size = getattr(settings, "MAX_BATCH_FILE_SIZE", None)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -153,7 +156,7 @@ def extract_zip_videos(
             if not is_allowed_video_extension(normalized_name, allowed_extensions):
                 continue
 
-            if valid_count >= max_files:
+            if max_files is not None and valid_count >= max_files:
                 entries.append(
                     {
                         "status": "error",

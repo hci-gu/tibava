@@ -197,6 +197,9 @@ IMAGE_RESOLUTIONS = [{"min_dim": 200, "suffix": "_m"}, {"min_dim": 1080, "suffix
 import json
 
 config_lut = {
+    "max_active_plugin_runs_per_batch": "MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH",
+    "max_active_batch_plugin_runs_per_user": "MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER",
+    "max_active_batch_plugin_runs_global": "MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL",
     "secret_key": "SECRET_KEY",
     "force_script_name": "FORCE_SCRIPT_NAME",
     "allowed_hosts": "ALLOWED_HOSTS",
@@ -229,3 +232,16 @@ if config_path is not None and os.path.exists(config_path):
                 continue
             conf = {config_lut[k]: v}
             globals().update(conf)
+
+# Environment overrides are shared by the API and worker containers.
+for setting_name, default in (
+    ("MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH", 4),
+    ("MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER", 4),
+    ("MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL", 4),
+):
+    globals()[setting_name] = int(os.environ.get(setting_name, globals().get(setting_name, default)))
+    if globals()[setting_name] < 1:
+        raise ValueError(f"{setting_name} must be at least 1")
+
+BATCH_PAUSE_FILE = os.environ.get("BATCH_PAUSE_FILE", "/cache/batch-processing.paused")
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1

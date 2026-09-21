@@ -393,7 +393,11 @@ class VideoBatchUpload(View):
                 batch.source_path = str(source["path"])
                 batch.save(update_fields=["source_path", "update_date"])
             else:
-                if len(uploaded_files) > get_max_batch_files():
+                max_batch_files = get_max_batch_files()
+                if (
+                    max_batch_files is not None
+                    and len(uploaded_files) > max_batch_files
+                ):
                     batch.status = VideoBatch.STATUS_ERROR
                     batch.save(update_fields=["status", "update_date"])
                     return JsonResponse(
@@ -1092,6 +1096,13 @@ class VideoBatchRetryFailedPluginSteps(View):
             ).update(status=VideoBatchPluginRun.STATUS_PENDING, error="")
 
             preset = data.get("preset") or batch.preset or DEFAULT_BATCH_PRESET
+            # Retry only dependency-failed descendants, never cancelled/deleted
+            # work or completed results. Their prerequisites are checked again.
+            VideoBatchPluginRun.objects.filter(
+                batch=batch, preset=preset,
+                status=VideoBatchPluginRun.STATUS_SKIPPED,
+                error="dependency_failed",
+            ).update(status=VideoBatchPluginRun.STATUS_PENDING, error="")
             if not user_has_active_batch_capacity(batch):
                 return JsonResponse(
                     {"status": "error", "type": "too_many_active_batches"},
