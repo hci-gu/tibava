@@ -28,13 +28,18 @@ from backend.plugin_manager import PluginManager
 from backend.tasks.batch import (
     get_completed_step_outputs,
     ingest_video_batch,
+    export_batch_elan,
     resolve_step_parameters,
     run_video_batch_plugin_step,
     run_video_batch_preset,
 )
 from backend.utils import media_url_to_video
 from backend.utils.task import PluginRunFailed, Task
-from backend.utils.batch_upload import extract_zip_videos, normalize_zip_member_name
+from backend.utils.batch_upload import (
+    extract_zip_videos,
+    normalize_zip_member_name,
+    repair_filename_unicode,
+)
 from backend.utils.batch_plugin_catalog import list_batch_plugin_catalog
 from backend.utils.upload import check_extension, download_file, get_file_extension
 from backend.utils.parser import Parser
@@ -53,6 +58,8 @@ from backend.views.video_batch import (
     VideoBatchCancel,
     VideoBatchDelete,
     VideoBatchExportElan,
+    VideoBatchExportElanDownload,
+    VideoBatchExportElanStatus,
     VideoBatchGet,
     VideoBatchList,
     VideoBatchPluginCatalog,
@@ -119,6 +126,20 @@ class UploadExtensionTests(SimpleTestCase):
 
 
 class BatchZipTests(SimpleTestCase):
+    def test_repair_filename_unicode_reverses_cp437_mojibake(self):
+        self.assertEqual(
+            repair_filename_unicode("folder/a\u2560\u00e8ret.mp4"),
+            "folder/\u00e5ret.mp4",
+        )
+        self.assertEqual(
+            repair_filename_unicode("folder/fo\u2560\u00ear.mp4"),
+            "folder/f\u00f6r.mp4",
+        )
+        self.assertEqual(
+            repair_filename_unicode("folder/F\u0393\u00c7\u00f4rsta.mp4"),
+            "folder/F\u2013rsta.mp4",
+        )
+
     def test_normalize_zip_member_name_rejects_unsafe_paths(self):
         self.assertIsNone(normalize_zip_member_name("../escape.mp4"))
         self.assertIsNone(normalize_zip_member_name("/absolute.mp4"))
@@ -892,6 +913,74 @@ class VideoBatchAPIDatabaseTests(TestCase):
                 )
             )
             self.assertTrue(all(">value:0<" not in elan for elan in elan_files))
+
+    @patch("backend.views.video_batch.export_batch_elan.apply_async")
+    def test_batch_elan_export_can_start_async_job(self, apply_async):
+        batch = VideoBatch.objects.create(owner=self.user, name="Async batch")
+        self.create_ready_batch_item(batch, "video.mp4")
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/export-elan",
+                data=json.dumps({"id": batch.id.hex, "async": True}),
+                content_type="application/json",
+            )
+        )
+        response = VideoBatchExportElan.as_view()(request)
+
+        self.assertEqual(response.status_code, 202)
+        payload = json.loads(response.content)
+        self.assertEqual(payload["total"], 1)
+        apply_async.assert_called_once_with((payload["job_id"],))
+
+        status_request = self.authenticated(
+            self.factory.get(
+                f"/video/batch/export-elan/status?id={payload['job_id']}"
+            )
+        )
+        status_response = VideoBatchExportElanStatus.as_view()(status_request)
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(json.loads(status_response.content)["status"], "queued")
+
+        export_batch_elan.run(payload["job_id"])
+        completed_response = VideoBatchExportElanStatus.as_view()(status_request)
+        completed = json.loads(completed_response.content)
+        self.assertEqual(completed["status"], "complete")
+        self.assertEqual(completed["progress"], 100)
+
+        download_request = self.authenticated(
+            self.factory.get(
+                f"/video/batch/export-elan/download?id={payload['job_id']}"
+            )
+        )
+        download_response = VideoBatchExportElanDownload.as_view()(download_request)
+        self.assertEqual(download_response.status_code, 200)
+
+    def test_batch_elan_export_repairs_corrupted_unicode_names(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Unicode batch")
+        item = self.create_ready_batch_item(
+            batch, "folder/a\u2560\u00e8ret - fo\u2560\u00ear.mp4"
+        )
+
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/export-elan",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+        response = VideoBatchExportElan.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Exported-Count"], "1")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            expected_path = "folder/\u00e5ret - f\u00f6r.eaf"
+            self.assertEqual(archive.namelist(), [expected_path])
+            elan = archive.read(expected_path).decode("utf-8")
+
+        self.assertIn("\u00e5ret - f\u00f6r.mp4", elan)
+        self.assertNotIn("╠", elan)
+        self.assertEqual(item.original_path, "folder/a\u2560\u00e8ret - fo\u2560\u00ear.mp4")
 
     def test_batch_elan_export_includes_report_for_partial_failures(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Partial")

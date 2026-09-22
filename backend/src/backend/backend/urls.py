@@ -25,6 +25,16 @@ urlpatterns = [
         name="video_batch_export_elan",
     ),
     path(
+        "video/batch/export-elan/status",
+        views.VideoBatchExportElanStatus.as_view(),
+        name="video_batch_export_elan_status",
+    ),
+    path(
+        "video/batch/export-elan/download",
+        views.VideoBatchExportElanDownload.as_view(),
+        name="video_batch_export_elan_download",
+    ),
+    path(
         "video/batch/retry-failed",
         views.VideoBatchRetryFailed.as_view(),
         name="video_batch_retry_failed",

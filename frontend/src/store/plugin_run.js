@@ -18,6 +18,7 @@ export const usePluginRunStore = defineStore("pluginRun", {
       pluginRunList: [],
       isLoading: false,
       pluginInProgress: false,
+      progressByVideo: {},
     };
   },
   getters: {
@@ -29,6 +30,16 @@ export const usePluginRunStore = defineStore("pluginRun", {
         return state.pluginRunList
           .map((id) => state.pluginRuns[id])
           .filter((e) => e.video_id === videoId);
+      };
+    },
+    progressForVideo: (state) => {
+      return (videoId) => {
+        return state.progressByVideo[videoId] || {
+          total: 0,
+          completed: 0,
+          active: 0,
+          percent: 0,
+        };
       };
     }
   },
@@ -92,6 +103,35 @@ export const usePluginRunStore = defineStore("pluginRun", {
             this.updateAll(res.data.entries);
             this.pluginInProgress = this.all.filter((e) => e.status === "RUNNING" || e.status === "QUEUED").length > 0;
           }
+        })
+        .finally(() => {
+          this.isLoading = false;
+        });
+    },
+    async fetchSummary() {
+      if (this.isLoading) {
+        return;
+      }
+      this.isLoading = true;
+      return axios
+        .get(`${config.API_LOCATION}/plugin/run/list`, {
+          params: { summary: true },
+        })
+        .then((res) => {
+          if (res.data.status !== "ok") return;
+          const progressByVideo = {};
+          res.data.entries.forEach((entry) => {
+            progressByVideo[entry.video_id] = {
+              total: entry.total,
+              completed: entry.completed,
+              active: entry.active,
+              percent: entry.total
+                ? Math.round((entry.completed * 100) / entry.total)
+                : 0,
+            };
+          });
+          Vue.set(this, "progressByVideo", progressByVideo);
+          this.pluginInProgress = res.data.entries.some((entry) => entry.active > 0);
         })
         .finally(() => {
           this.isLoading = false;
@@ -204,6 +244,7 @@ export const usePluginRunStore = defineStore("pluginRun", {
     clearStore() {
       this.pluginRuns = {};
       this.pluginRunList = [];
+      this.progressByVideo = {};
     },
     delete(id_list) {
       id_list.forEach((id) => {

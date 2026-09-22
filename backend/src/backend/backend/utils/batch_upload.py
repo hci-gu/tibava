@@ -1,6 +1,7 @@
 import hashlib
 import os
 import posixpath
+import unicodedata
 import uuid
 import zipfile
 from pathlib import Path
@@ -16,6 +17,32 @@ DEFAULT_MAX_ACTIVE_BATCH_INGESTS_PER_USER = 1
 DEFAULT_MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH = 1
 DEFAULT_MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL = 4
 DEFAULT_MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER = 2
+
+_MOJIBAKE_MARKERS = ("╠", "╣", "╚", "╝", "ΓÇ")
+
+
+def repair_filename_unicode(value):
+    """Repair the CP437-decoded UTF-8 filenames seen in older batch imports."""
+    if not isinstance(value, str):
+        return value
+
+    normalized = unicodedata.normalize("NFC", value)
+    if not any(marker in normalized for marker in _MOJIBAKE_MARKERS):
+        return normalized
+
+    for encoding in ("cp437", "cp850"):
+        try:
+            repaired = unicodedata.normalize(
+                "NFC", normalized.encode(encoding).decode("utf-8")
+            )
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if repaired != normalized and not any(
+            marker in repaired for marker in _MOJIBAKE_MARKERS
+        ):
+            return repaired
+
+    return normalized
 
 
 def get_batch_upload_root():
@@ -98,7 +125,7 @@ def save_batch_source_file(batch_id, uploaded_file, prefix=None):
 
 
 def normalize_zip_member_name(name):
-    normalized = name.replace("\\", "/")
+    normalized = repair_filename_unicode(name).replace("\\", "/")
     normalized = posixpath.normpath(normalized)
     if normalized in {"", "."}:
         return None

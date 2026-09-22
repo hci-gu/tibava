@@ -6,7 +6,8 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from django.http import HttpResponse, JsonResponse
+from django.core.cache import cache
+from django.http import FileResponse, HttpResponse, JsonResponse
 from django.utils.text import slugify
 from django.views import View
 
@@ -17,7 +18,12 @@ from backend.models import (
     VideoBatchItem,
     VideoBatchPluginRun,
 )
-from backend.tasks.batch import cancel_batch_work, ingest_video_batch, run_video_batch_preset
+from backend.tasks.batch import (
+    cancel_batch_work,
+    export_batch_elan,
+    ingest_video_batch,
+    run_video_batch_preset,
+)
 from backend.utils.batch_upload import (
     get_batch_dir,
     get_max_active_batch_ingests_per_user,
@@ -26,8 +32,10 @@ from backend.utils.batch_upload import (
     save_batch_source_file,
     sha256_path,
     normalize_zip_member_name,
+    repair_filename_unicode,
 )
 from backend.utils.batch_plugin_catalog import list_batch_plugin_catalog, timeline_by_name
+from backend.utils.elan_export import ELAN_EXPORT_CACHE_TIMEOUT, elan_export_cache_key
 from backend.utils.video_ingest import is_allowed_video_extension
 from backend.utils.plugin_presets import (
     DEFAULT_BATCH_PRESET,
@@ -414,7 +422,9 @@ class VideoBatchUpload(View):
 
                 paths = parse_batch_paths(request)
                 for index, uploaded_file in enumerate(uploaded_files):
-                    original_path = path_for_file(paths, index, uploaded_file)
+                    original_path = repair_filename_unicode(
+                        path_for_file(paths, index, uploaded_file)
+                    )
                     if not is_allowed_video_extension(uploaded_file.name):
                         continue
 
@@ -423,7 +433,7 @@ class VideoBatchUpload(View):
                     )
                     VideoBatchItem.objects.create(
                         batch=batch,
-                        original_filename=uploaded_file.name,
+                        original_filename=repair_filename_unicode(uploaded_file.name),
                         original_path=original_path,
                         source_path=str(source["path"]),
                         file_size=source["file_size"],
@@ -513,8 +523,15 @@ class VideoBatchGet(View):
             except VideoBatch.DoesNotExist:
                 return JsonResponse({"status": "error", "type": "not_exist"}, status=500)
 
+            summary_only = request.GET.get("summary", "false").lower() == "true"
             return JsonResponse(
-                {"status": "ok", "entry": batch.to_dict(include_items=True, include_videos=True)}
+                {
+                    "status": "ok",
+                    "entry": batch.to_dict(
+                        include_items=not summary_only,
+                        include_videos=not summary_only,
+                    ),
+                }
             )
         except Exception:
             logger.exception("Failed to get video batch")
@@ -552,6 +569,45 @@ class VideoBatchExportElan(View):
                 {"status": "error", "type": "no_ready_items"}, status=500
             )
 
+        if data.get("async"):
+            job_id = uuid.uuid4().hex
+            archive_path = get_batch_dir(batch.id) / "elan-exports" / f"{job_id}.zip"
+            filename = f"{slugify(batch.name) or batch.id.hex}-elan.zip"
+            total = items.count()
+            cache.set(
+                elan_export_cache_key(job_id),
+                {
+                    "job_id": job_id,
+                    "batch_id": batch.id.hex,
+                    "owner_id": str(request.user.pk),
+                    "archive_path": str(archive_path),
+                    "filename": filename,
+                    "status": "queued",
+                    "phase": "queued",
+                    "processed": 0,
+                    "total": total,
+                    "exported": 0,
+                    "failed": 0,
+                },
+                ELAN_EXPORT_CACHE_TIMEOUT,
+            )
+            try:
+                export_batch_elan.apply_async((job_id,))
+            except Exception:
+                logger.exception("Failed to queue batch ELAN export %s", job_id)
+                cache.delete(elan_export_cache_key(job_id))
+                return JsonResponse(
+                    {"status": "error", "type": "export_queue_failed"}, status=500
+                )
+            return JsonResponse(
+                {
+                    "status": "ok",
+                    "job_id": job_id,
+                    "total": total,
+                },
+                status=202,
+            )
+
         buffer = io.BytesIO()
         report = {"exported": [], "failed": []}
         used_paths = set()
@@ -560,9 +616,14 @@ class VideoBatchExportElan(View):
             for item in items.order_by("original_path", "original_filename"):
                 archive_path = elan_archive_path(item, used_paths)
                 try:
-                    linked_file_path = Path(
+                    normalized_source_path = normalize_zip_member_name(
                         item.original_path or item.original_filename
-                    ).name
+                    )
+                    linked_file_path = (
+                        Path(normalized_source_path).name
+                        if normalized_source_path
+                        else repair_filename_unicode(item.original_filename)
+                    )
                     elan = exporter.export_elan(
                         {"aggregation": 0},
                         item.video,
@@ -585,7 +646,7 @@ class VideoBatchExportElan(View):
                     report["failed"].append(
                         {
                             "item_id": item.id.hex,
-                            "original_path": item.original_path,
+                            "original_path": repair_filename_unicode(item.original_path),
                             "reason": exc.code,
                         }
                     )
@@ -596,7 +657,7 @@ class VideoBatchExportElan(View):
                     report["failed"].append(
                         {
                             "item_id": item.id.hex,
-                            "original_path": item.original_path,
+                            "original_path": repair_filename_unicode(item.original_path),
                             "reason": "eaf_filter_failed",
                         }
                     )
@@ -607,7 +668,7 @@ class VideoBatchExportElan(View):
                     report["failed"].append(
                         {
                             "item_id": item.id.hex,
-                            "original_path": item.original_path,
+                            "original_path": repair_filename_unicode(item.original_path),
                             "reason": "elan_export_failed",
                         }
                     )
@@ -623,6 +684,64 @@ class VideoBatchExportElan(View):
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         response["X-Exported-Count"] = str(len(report["exported"]))
         response["X-Failed-Count"] = str(len(report["failed"]))
+        return response
+
+
+class VideoBatchExportElanStatus(View):
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return JsonResponse(
+                {"status": "error", "type": "not_authenticated"}, status=500
+            )
+
+        state = cache.get(elan_export_cache_key(request.GET.get("id", "")))
+        if state is None or state.get("owner_id") != str(request.user.pk):
+            return JsonResponse({"status": "error", "type": "not_exist"}, status=404)
+
+        total = state.get("total", 0)
+        processed = state.get("processed", 0)
+        progress = 0 if not total else round(processed * 100 / total)
+        if state.get("status") == "complete":
+            progress = 100
+        return JsonResponse(
+            {
+                "status": state.get("status"),
+                "phase": state.get("phase"),
+                "processed": processed,
+                "total": total,
+                "exported": state.get("exported", 0),
+                "failed": state.get("failed", 0),
+                "progress": progress,
+                "error": state.get("error"),
+            }
+        )
+
+
+class VideoBatchExportElanDownload(View):
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return JsonResponse(
+                {"status": "error", "type": "not_authenticated"}, status=500
+            )
+
+        state = cache.get(elan_export_cache_key(request.GET.get("id", "")))
+        if state is None or state.get("owner_id") != str(request.user.pk):
+            return JsonResponse({"status": "error", "type": "not_exist"}, status=404)
+        if state.get("status") != "complete":
+            return JsonResponse({"status": "error", "type": "not_ready"}, status=409)
+
+        archive_path = Path(state["archive_path"])
+        if not archive_path.is_file():
+            return JsonResponse({"status": "error", "type": "not_exist"}, status=404)
+
+        response = FileResponse(
+            archive_path.open("rb"),
+            as_attachment=True,
+            filename=state["filename"],
+            content_type="application/zip",
+        )
+        response["X-Exported-Count"] = str(state.get("exported", 0))
+        response["X-Failed-Count"] = str(state.get("failed", 0))
         return response
 
 

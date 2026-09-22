@@ -13,6 +13,12 @@ export const useVideoBatchStore = defineStore("videoBatch", {
       isLoading: false,
       isUploading: false,
       isExportingElan: false,
+      elanExportProgress: 0,
+      elanExportProcessed: 0,
+      elanExportTotal: 0,
+      elanExportExported: 0,
+      elanExportFailed: 0,
+      elanExportMessage: "",
       progress: 0,
     };
   },
@@ -91,14 +97,22 @@ export const useVideoBatchStore = defineStore("videoBatch", {
           this.isLoading = false;
         });
     },
-    async fetch(batchId) {
+    async fetch(batchId, { summary = false } = {}) {
       if (this.isLoading) return;
       this.isLoading = true;
       return axios
-        .get(`${config.API_LOCATION}/video/batch/get`, { params: { id: batchId } })
+        .get(`${config.API_LOCATION}/video/batch/get`, {
+          params: { id: batchId, summary },
+        })
         .then((res) => {
           if (res.data.status === "ok") {
-            Vue.set(this.batches, res.data.entry.id, res.data.entry);
+            const entry = res.data.entry;
+            const current = this.batches[entry.id];
+            Vue.set(
+              this.batches,
+              entry.id,
+              summary && current ? { ...current, ...entry } : entry
+            );
             if (!this.batchList.includes(res.data.entry.id)) {
               this.batchList.push(res.data.entry.id);
             }
@@ -196,32 +210,71 @@ export const useVideoBatchStore = defineStore("videoBatch", {
     },
     async exportElan(batchId, batchName) {
       this.isExportingElan = true;
-      return axios
-        .post(
-          `${config.API_LOCATION}/video/batch/export-elan`,
-          { id: batchId },
-          { responseType: "blob" }
-        )
-        .then((res) => {
-          const disposition = res.headers["content-disposition"] || "";
-          const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
-          const filename = filenameMatch
-            ? filenameMatch[1]
-            : `${batchName || batchId}-elan.zip`;
-          const url = URL.createObjectURL(
-            new Blob([res.data], { type: "application/zip" })
-          );
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = filename;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          URL.revokeObjectURL(url);
-        })
-        .finally(() => {
-          this.isExportingElan = false;
+      this.elanExportProgress = 0;
+      this.elanExportProcessed = 0;
+      this.elanExportTotal = 0;
+      this.elanExportExported = 0;
+      this.elanExportFailed = 0;
+      this.elanExportMessage = "Starting export…";
+
+      try {
+        const start = await axios.post(`${config.API_LOCATION}/video/batch/export-elan`, {
+          id: batchId,
+          async: true,
         });
+        const jobId = start.data.job_id;
+        this.elanExportTotal = start.data.total || 0;
+
+        while (true) {
+          const status = await axios.get(
+            `${config.API_LOCATION}/video/batch/export-elan/status`,
+            { params: { id: jobId } }
+          );
+          const data = status.data;
+          this.elanExportProgress = data.progress || 0;
+          this.elanExportProcessed = data.processed || 0;
+          this.elanExportTotal = data.total || this.elanExportTotal;
+          this.elanExportExported = data.exported || 0;
+          this.elanExportFailed = data.failed || 0;
+          this.elanExportMessage =
+            data.phase === "queued"
+              ? "Waiting for an export worker…"
+              : data.phase === "finalizing"
+                ? "Finalizing archive…"
+                : `Exporting files (${this.elanExportProcessed}/${this.elanExportTotal})…`;
+
+          if (data.status === "complete") {
+            this.elanExportMessage = "Preparing download…";
+            const archive = await axios.get(
+              `${config.API_LOCATION}/video/batch/export-elan/download`,
+              { params: { id: jobId }, responseType: "blob" }
+            );
+            const disposition = archive.headers["content-disposition"] || "";
+            const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+            const filename = filenameMatch
+              ? filenameMatch[1]
+              : `${batchName || batchId}-elan.zip`;
+            const url = URL.createObjectURL(
+              new Blob([archive.data], { type: "application/zip" })
+            );
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            return;
+          }
+          if (data.status === "error") {
+            throw new Error(data.error || "ELAN export failed");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      } finally {
+        this.isExportingElan = false;
+        this.elanExportMessage = "";
+      }
     },
     async delete(batchId) {
       return axios

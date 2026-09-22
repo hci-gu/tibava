@@ -32,7 +32,7 @@
           <v-btn
             outlined
             class="mr-2"
-            :disabled="!hasReadyVideos"
+            :disabled="!hasReadyVideos || videoBatchStore.isExportingElan"
             :loading="videoBatchStore.isExportingElan"
             @click="exportElan"
           >
@@ -80,6 +80,18 @@
 
       <v-alert v-if="exportError" dense outlined type="error" dismissible @input="exportError = ''">
         {{ exportError }}
+      </v-alert>
+
+      <v-alert v-if="videoBatchStore.isExportingElan" dense outlined type="info" class="mb-4">
+        <div class="mb-2">{{ videoBatchStore.elanExportMessage }}</div>
+        <v-progress-linear :value="videoBatchStore.elanExportProgress" height="18">
+          <strong>{{ videoBatchStore.elanExportProgress }}%</strong>
+        </v-progress-linear>
+        <div class="text-caption mt-2">
+          {{ videoBatchStore.elanExportExported }} exported,
+          {{ videoBatchStore.elanExportFailed }} failed.
+          This can take several minutes for large batches.
+        </div>
       </v-alert>
 
       <v-row class="mb-4">
@@ -366,9 +378,8 @@ export default {
     };
   },
   mounted() {
-    this.videoBatchStore.fetchPresets();
-    this.fetchBatch();
-    this.timer = setInterval(this.fetchBatch, 3000);
+    this.fetchBatch(false);
+    this.timer = setInterval(() => this.fetchBatch(true), 3000);
   },
   beforeDestroy() {
     if (this.timer) clearInterval(this.timer);
@@ -581,8 +592,8 @@ export default {
     ...mapStores(useVideoBatchStore),
   },
   methods: {
-    fetchBatch() {
-      this.videoBatchStore.fetch(this.batchId);
+    fetchBatch(summary = false) {
+      this.videoBatchStore.fetch(this.batchId, { summary });
     },
     folderPathForItem(item) {
       const pathParts = (item.original_path || "").split("/");
@@ -665,7 +676,8 @@ export default {
       });
       this.fetchBatch();
     },
-    openRunPresetDialog() {
+    async openRunPresetDialog() {
+      await this.videoBatchStore.fetchPresets();
       this.presetToRun =
         (this.batch && this.batch.preset) ||
         (this.runPresetItems.length ? this.runPresetItems[0].id : null);

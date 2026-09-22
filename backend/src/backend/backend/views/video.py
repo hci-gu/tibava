@@ -9,6 +9,7 @@ from backend.utils.video_ingest import ingest_video_file
 
 from django.views import View
 from django.http import JsonResponse
+from django.db.models import Count
 
 # from django.core.exceptions import BadRequest
 
@@ -81,8 +82,11 @@ class VideoList(View):
             if not request.user.is_authenticated:
                 return JsonResponse({"status": "error"}, status=500)
             entries = []
-            for video in Video.objects.filter(owner=request.user):
-                entries.append(video.to_dict())
+            videos = Video.objects.filter(owner=request.user).annotate(
+                timeline_count=Count("timeline", distinct=True)
+            )
+            for video in videos:
+                entries.append(video.to_dict(timeline_count=video.timeline_count))
             return JsonResponse({"status": "ok", "entries": entries})
         except Exception as e:
             logger.exception("Error listing videos")

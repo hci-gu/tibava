@@ -21,6 +21,7 @@ from backend.utils import download_url, download_file, media_url_to_video
 from django.views import View
 from django.http import HttpResponse, JsonResponse
 from django.conf import settings
+from django.db.models import Count, Q
 
 # from django.core.exceptions import BadRequest
 
@@ -179,7 +180,6 @@ class PluginRunList(View):
             logger.error("PluginRunNew::not_authenticated")
             return JsonResponse({"status": "error"})
 
-        plugin_manager = PluginManager()
         try:
             video_id = request.GET.get("video_id")
             if video_id:
@@ -188,6 +188,47 @@ class PluginRunList(View):
                 )
             else:
                 analyses = PluginRun.objects.filter(video__owner=request.user)
+
+            if request.GET.get("summary", "false").lower() == "true":
+                entries = analyses.values("video_id").annotate(
+                    total=Count("id"),
+                    completed=Count(
+                        "id",
+                        filter=Q(
+                            status__in=[
+                                PluginRun.STATUS_DONE,
+                                PluginRun.STATUS_ERROR,
+                                PluginRun.STATUS_UNKNOWN,
+                            ]
+                        ),
+                    ),
+                    active=Count(
+                        "id",
+                        filter=Q(
+                            status__in=[
+                                PluginRun.STATUS_RUNNING,
+                                PluginRun.STATUS_QUEUED,
+                                PluginRun.STATUS_WAITING,
+                            ]
+                        ),
+                    ),
+                )
+                return JsonResponse(
+                    {
+                        "status": "ok",
+                        "entries": [
+                            {
+                                "video_id": entry["video_id"].hex,
+                                "total": entry["total"],
+                                "completed": entry["completed"],
+                                "active": entry["active"],
+                            }
+                            for entry in entries
+                        ],
+                    }
+                )
+
+            plugin_manager = PluginManager()
             # print(len(analyses), flush=True)
             add_results = request.GET.get("add_results", "false").lower() == "true"
 

@@ -57,7 +57,13 @@ class Video(models.Model):
     analyser_data_file = models.UUIDField(blank=True, null=True)
     analyser_data_ext = models.CharField(max_length=256, blank=True, null=True)
 
-    def to_dict(self, include_refs_hashes=True, include_refs=False, **kwargs):
+    def to_dict(
+        self,
+        include_refs_hashes=True,
+        include_refs=False,
+        include_timeline_count=True,
+        **kwargs,
+    ):
         return {
             "name": self.name,
             "file": self.file.hex,
@@ -68,7 +74,15 @@ class Video(models.Model):
             "duration": self.duration,
             "height": self.height,
             "width": self.width,
-            "num_timelines": len(Timeline.objects.filter(video=self)),
+            "num_timelines": (
+                (
+                    kwargs["timeline_count"]
+                    if "timeline_count" in kwargs
+                    else len(Timeline.objects.filter(video=self))
+                )
+                if include_timeline_count
+                else None
+            ),
         }
 
     def clone(self, owner=None, include_timelines=True, include_annotations=True):
@@ -237,11 +251,15 @@ class VideoBatch(models.Model):
         if include_items:
             result["items"] = [
                 item.to_dict(include_video=include_videos)
-                for item in self.items.order_by("original_path", "original_filename")
+                for item in self.items.select_related("video").order_by(
+                    "original_path", "original_filename"
+                )
             ]
             result["plugin_runs"] = [
                 plugin_run.to_dict()
-                for plugin_run in plugin_runs.order_by(
+                for plugin_run in plugin_runs.select_related(
+                    "item", "item__video", "plugin_run"
+                ).order_by(
                     "item__original_path", "step_index", "date"
                 )
             ]
@@ -296,7 +314,7 @@ class VideoBatchItem(models.Model):
             "update_date": self.update_date,
         }
         if include_video and self.video:
-            result["video"] = self.video.to_dict()
+            result["video"] = self.video.to_dict(include_timeline_count=False)
         return result
 
 

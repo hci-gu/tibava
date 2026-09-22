@@ -127,7 +127,7 @@ export default {
         return;
       }
       await this.videoStore.fetchAll();
-      await this.pluginRunStore.fetchAll({ addResults: false, });
+      await this.pluginRunStore.fetchSummary();
       if (fetchTimelines) {
         await this.timelineStore.fetchAll({ addResultsType: true });
       }
@@ -143,8 +143,7 @@ export default {
     videosProgress() {
       const progress = {}
       for (const vid of this.videos) {
-        const runs = this.pluginRunStore.forVideo(vid.id);
-        progress[vid.id] = runs.filter((r) => r.status !== 'RUNNING' && r.status !== 'QUEUED').length * 100 / runs.length;
+        progress[vid.id] = this.pluginRunStore.progressForVideo(vid.id).percent;
       }
       return progress
     },
@@ -163,19 +162,13 @@ export default {
         if (newState) {
           this.fetchPluginTimer = setInterval(
             function () {
-              this.fetchData();
+              this.pluginRunStore.fetchSummary();
             }.bind(this),
             2000
           );
         } else {
           clearInterval(this.fetchPluginTimer);
         } 
-      }
-    },
-    videosProgress(newState, oldState) {
-      if (Object.keys(newState).some(k => oldState && (!(k in oldState) || newState[k] !== oldState[k]))) {
-        // already fetch partial progress and not just when all plugins are finished
-        this.fetchData(true);
       }
     },
     videos(newState, oldState) {

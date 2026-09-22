@@ -7,6 +7,7 @@ from functools import wraps
 
 from celery import shared_task
 from django.conf import settings
+from django.core.cache import cache
 from django.db import connection
 from django.utils import timezone
 
@@ -33,10 +34,78 @@ from backend.utils.plugin_presets import (
     validate_batch_preset_definition,
 )
 from backend.utils.batch_plugin_catalog import timeline_by_name
+from backend.utils.elan_export import (
+    ELAN_EXPORT_CACHE_TIMEOUT,
+    build_elan_archive,
+    elan_export_cache_key,
+)
 from backend.utils.video_ingest import PathUploadFile, ingest_video_file
 
 
 logger = logging.getLogger(__name__)
+
+
+def _update_elan_export_state(job_id, **updates):
+    key = elan_export_cache_key(job_id)
+    state = cache.get(key)
+    if state is None:
+        return None
+    state.update(updates)
+    cache.set(key, state, ELAN_EXPORT_CACHE_TIMEOUT)
+    return state
+
+
+@shared_task
+def export_batch_elan(job_id):
+    state = _update_elan_export_state(job_id, status="running", phase="exporting")
+    if state is None:
+        return
+
+    try:
+        batch = VideoBatch.objects.get(id=state["batch_id"])
+        items = list(
+            batch.items.filter(
+                ingest_status=VideoBatchItem.STATUS_READY,
+                video__isnull=False,
+                video__owner=batch.owner,
+            )
+            .select_related("video")
+            .order_by("original_path", "original_filename")
+        )
+
+        def progress(processed, total, exported, failed, phase):
+            _update_elan_export_state(
+                job_id,
+                phase=phase,
+                processed=processed,
+                total=total,
+                exported=exported,
+                failed=failed,
+            )
+
+        report = build_elan_archive(
+            items,
+            state["archive_path"],
+            progress_callback=progress,
+        )
+        _update_elan_export_state(
+            job_id,
+            status="complete",
+            phase="complete",
+            processed=len(items),
+            total=len(items),
+            exported=len(report["exported"]),
+            failed=len(report["failed"]),
+        )
+    except Exception as exc:
+        logger.exception("Failed to build batch ELAN export %s", job_id)
+        _update_elan_export_state(
+            job_id,
+            status="error",
+            phase="error",
+            error="elan_export_failed",
+            error_detail=str(exc),
+        )
 
 
 def batch_processing_paused():
