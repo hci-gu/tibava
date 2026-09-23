@@ -54,7 +54,7 @@ from backend.utils.plugin_presets import (
 )
 from backend.utils.video_ingest import ingest_video_file
 from backend.views.video import VideoUpload
-from backend.views.video_export import VideoExport
+from backend.views.video_export import VideoExport, resolve_elan_tier_id
 from backend.views.video_batch import (
     VideoBatchCancel,
     VideoBatchDelete,
@@ -93,6 +93,34 @@ class ParserDefaultTests(SimpleTestCase):
         self.assertEqual(
             parser([]),
             {"none": None, "false": False, "zero": 0, "empty": ""},
+        )
+
+
+class ElanTierNameTests(SimpleTestCase):
+    def test_cluster_tiers_are_qualified_by_parent_type(self):
+        self.assertEqual(
+            resolve_elan_tier_id(
+                SimpleNamespace(
+                    name="Cluster 1",
+                    parent=SimpleNamespace(name="Place Clustering"),
+                )
+            ),
+            "PCluster 1",
+        )
+        self.assertEqual(
+            resolve_elan_tier_id(
+                SimpleNamespace(
+                    name="Cluster 1",
+                    parent=SimpleNamespace(name="Face Clustering"),
+                )
+            ),
+            "FCluster 1",
+        )
+
+    def test_non_cluster_tier_name_is_unchanged(self):
+        self.assertEqual(
+            resolve_elan_tier_id(SimpleNamespace(name="Transcript", parent=None)),
+            "Transcript",
         )
 
 

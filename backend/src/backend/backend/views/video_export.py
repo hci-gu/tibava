@@ -47,6 +47,19 @@ class ElanExportError(Exception):
         self.code = code
 
 
+def resolve_elan_tier_id(timeline):
+    parent_name = timeline.parent.name if timeline.parent else None
+    cluster_prefix = {
+        "Place Clustering": "PCluster",
+        "Face Clustering": "FCluster",
+    }.get(parent_name)
+    if cluster_prefix and timeline.name.startswith("Cluster "):
+        cluster_number = timeline.name.removeprefix("Cluster ").strip()
+        if cluster_number.isdigit():
+            return f"{cluster_prefix} {cluster_number}"
+    return timeline.name
+
+
 def resolve_elan_shot_timeline(video_db):
     state = VideoAnalysisState.objects.filter(video=video_db).select_related(
         "selected_shots"
@@ -795,8 +808,10 @@ class VideoExport(View):
         data_manager = DataManager("/predictions/")
 
         # for all timelines
-        for timeline_db in Timeline.objects.filter(video=video_db):
-            tier = timeline_db.name
+        for timeline_db in Timeline.objects.filter(video=video_db).select_related(
+            "parent"
+        ):
+            tier = resolve_elan_tier_id(timeline_db)
 
             # ignore timelines with the same name TODO: check if there is a better way
             if tier in list(eaf.tiers.keys()):
