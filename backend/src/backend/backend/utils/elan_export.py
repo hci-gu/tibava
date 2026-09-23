@@ -16,7 +16,9 @@ def elan_export_cache_key(job_id):
     return f"elan-export:{job_id}"
 
 
-def build_elan_archive(items, archive_path, progress_callback=None):
+def build_elan_archive(
+    items, archive_path, progress_callback=None, apply_filtering=True
+):
     """Build a batch ELAN archive and report item-level progress while doing so."""
     from backend.views.video_export import ElanExportError, VideoExport
 
@@ -46,16 +48,17 @@ def build_elan_archive(items, archive_path, progress_callback=None):
                     item.video,
                     linked_file_path=linked_file_path,
                 )
-                filtered_elan, filter_result = filter_eaf_xml(elan)
-                logger.info(
-                    "Filtered batch ELAN export item_id=%s groups=%d "
-                    "cluster_groups=%d warnings=%d",
-                    item.id.hex,
-                    len(filter_result.groups),
-                    len(filter_result.cluster_groups),
-                    len(filter_result.warnings),
-                )
-                archive.writestr(archive_path_name, filtered_elan)
+                if apply_filtering:
+                    elan, filter_result = filter_eaf_xml(elan)
+                    logger.info(
+                        "Filtered batch ELAN export item_id=%s groups=%d "
+                        "cluster_groups=%d warnings=%d",
+                        item.id.hex,
+                        len(filter_result.groups),
+                        len(filter_result.cluster_groups),
+                        len(filter_result.warnings),
+                    )
+                archive.writestr(archive_path_name, elan)
                 report["exported"].append(
                     {"item_id": item.id.hex, "path": archive_path_name}
                 )

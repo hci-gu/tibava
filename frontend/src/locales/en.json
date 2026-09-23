@@ -101,7 +101,8 @@
         "export_name": "JSON"
       },
       "elan": {
-        "export_name": "ELAN"
+        "export_name": "ELAN",
+        "apply_filtering": "Apply filtering"
       },
       "export": "export",
       "close": "close"

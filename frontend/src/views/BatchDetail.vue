@@ -34,10 +34,20 @@
             class="mr-2"
             :disabled="!hasReadyVideos || videoBatchStore.isExportingElan"
             :loading="videoBatchStore.isExportingElan"
-            @click="exportElan"
+            @click="exportElan(true)"
           >
             <v-icon left>mdi-file-export-outline</v-icon>
             Export ELAN
+          </v-btn>
+          <v-btn
+            outlined
+            class="mr-2"
+            :disabled="!hasReadyVideos || videoBatchStore.isExportingElan"
+            :loading="videoBatchStore.isExportingElan"
+            @click="exportElan(false)"
+          >
+            <v-icon left>mdi-file-export-outline</v-icon>
+            Export raw ELAN
           </v-btn>
           <v-btn outlined class="mr-2" @click="retryFailed">
             <v-icon left>mdi-refresh</v-icon>
@@ -703,10 +713,14 @@ export default {
       await this.videoBatchStore.retryFailedPluginSteps(this.batchId);
       this.fetchBatch();
     },
-    async exportElan() {
+    async exportElan(applyFiltering = true) {
       this.exportError = "";
       try {
-        await this.videoBatchStore.exportElan(this.batchId, this.batch.name);
+        await this.videoBatchStore.exportElan(
+          this.batchId,
+          this.batch.name,
+          applyFiltering,
+        );
       } catch (error) {
         this.exportError = "The ELAN batch export could not be created.";
       }

@@ -35,6 +35,8 @@ from enum import Enum
 from data import DataManager, Shot
 import numpy as np
 
+from backend.eaf_filter import filter_eaf_xml
+
 
 logger = logging.getLogger(__name__)
 
@@ -945,6 +947,8 @@ class VideoExport(View):
 
             elif request.POST.get("format") == "elan":
                 result = self.export_elan(parameters, video_db)
+                if parameters.get("apply_filtering", True):
+                    result, _ = filter_eaf_xml(result)
                 return JsonResponse(
                     {"status": "ok", "file": result, "extension": "eaf"}
                 )

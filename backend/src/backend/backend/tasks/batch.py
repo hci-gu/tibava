@@ -87,6 +87,7 @@ def export_batch_elan(job_id):
             items,
             state["archive_path"],
             progress_callback=progress,
+            apply_filtering=state.get("apply_filtering", True),
         )
         _update_elan_export_state(
             job_id,

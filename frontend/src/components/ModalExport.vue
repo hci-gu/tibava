@@ -150,6 +150,12 @@ export default {
                 this.$t("modal.plugin.aggregation.mean"),
               ],
             },
+            {
+              field: "checkbox",
+              name: "apply_filtering",
+              value: true,
+              text: this.$t("modal.export.elan.apply_filtering"),
+            },
           ],
         },
         {

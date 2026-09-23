@@ -208,7 +208,7 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         { id: batchId }
       );
     },
-    async exportElan(batchId, batchName) {
+    async exportElan(batchId, batchName, applyFiltering = true) {
       this.isExportingElan = true;
       this.elanExportProgress = 0;
       this.elanExportProcessed = 0;
@@ -221,6 +221,7 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         const start = await axios.post(`${config.API_LOCATION}/video/batch/export-elan`, {
           id: batchId,
           async: true,
+          apply_filtering: applyFiltering,
         });
         const jobId = start.data.job_id;
         this.elanExportTotal = start.data.total || 0;
@@ -253,7 +254,7 @@ export const useVideoBatchStore = defineStore("videoBatch", {
             const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
             const filename = filenameMatch
               ? filenameMatch[1]
-              : `${batchName || batchId}-elan.zip`;
+              : `${batchName || batchId}-${applyFiltering ? "elan" : "raw-elan"}.zip`;
             const url = URL.createObjectURL(
               new Blob([archive.data], { type: "application/zip" })
             );

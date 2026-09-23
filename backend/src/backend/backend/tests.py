@@ -54,6 +54,7 @@ from backend.utils.plugin_presets import (
 )
 from backend.utils.video_ingest import ingest_video_file
 from backend.views.video import VideoUpload
+from backend.views.video_export import VideoExport
 from backend.views.video_batch import (
     VideoBatchCancel,
     VideoBatchDelete,
@@ -913,6 +914,73 @@ class VideoBatchAPIDatabaseTests(TestCase):
                 )
             )
             self.assertTrue(all(">value:0<" not in elan for elan in elan_files))
+
+    def test_single_video_elan_export_applies_eaf_filter(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Single export")
+        item = self.create_ready_batch_item(batch, "video.mp4")
+        request = self.authenticated(
+            self.factory.post(
+                "/video/export",
+                {
+                    "video_id": item.video_id.hex,
+                    "format": "elan",
+                    "parameters": json.dumps([]),
+                },
+            )
+        )
+
+        response = VideoExport.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["extension"], "eaf")
+        self.assertIn("<ANNOTATION_VALUE>0</ANNOTATION_VALUE>", payload["file"])
+        self.assertNotIn(">value:0<", payload["file"])
+
+    def test_single_video_elan_export_can_skip_eaf_filter(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Single raw export")
+        item = self.create_ready_batch_item(batch, "video.mp4")
+        request = self.authenticated(
+            self.factory.post(
+                "/video/export",
+                {
+                    "video_id": item.video_id.hex,
+                    "format": "elan",
+                    "parameters": json.dumps(
+                        [{"name": "apply_filtering", "value": False}]
+                    ),
+                },
+            )
+        )
+
+        response = VideoExport.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertEqual(payload["status"], "ok")
+        self.assertIn(">value:0<", payload["file"])
+
+    def test_batch_elan_export_can_skip_eaf_filter(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Raw batch")
+        self.create_ready_batch_item(batch, "video.mp4")
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/export-elan",
+                data=json.dumps(
+                    {"id": batch.id.hex, "apply_filtering": False}
+                ),
+                content_type="application/json",
+            )
+        )
+
+        response = VideoBatchExportElan.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("raw-batch-raw-elan.zip", response["Content-Disposition"])
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            elan = archive.read("video.eaf").decode("utf-8")
+        self.assertIn(">value:0<", elan)
 
     @patch("backend.views.video_batch.export_batch_elan.apply_async")
     def test_batch_elan_export_can_start_async_job(self, apply_async):

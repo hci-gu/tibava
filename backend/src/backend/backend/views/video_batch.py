@@ -569,10 +569,17 @@ class VideoBatchExportElan(View):
                 {"status": "error", "type": "no_ready_items"}, status=500
             )
 
+        apply_filtering = data.get("apply_filtering", True)
+        if not isinstance(apply_filtering, bool):
+            return JsonResponse(
+                {"status": "error", "type": "wrong_request_body"}, status=500
+            )
+
         if data.get("async"):
             job_id = uuid.uuid4().hex
             archive_path = get_batch_dir(batch.id) / "elan-exports" / f"{job_id}.zip"
-            filename = f"{slugify(batch.name) or batch.id.hex}-elan.zip"
+            filename_suffix = "elan" if apply_filtering else "raw-elan"
+            filename = f"{slugify(batch.name) or batch.id.hex}-{filename_suffix}.zip"
             total = items.count()
             cache.set(
                 elan_export_cache_key(job_id),
@@ -582,6 +589,7 @@ class VideoBatchExportElan(View):
                     "owner_id": str(request.user.pk),
                     "archive_path": str(archive_path),
                     "filename": filename,
+                    "apply_filtering": apply_filtering,
                     "status": "queued",
                     "phase": "queued",
                     "processed": 0,
@@ -629,16 +637,17 @@ class VideoBatchExportElan(View):
                         item.video,
                         linked_file_path=linked_file_path,
                     )
-                    filtered_elan, filter_result = filter_eaf_xml(elan)
-                    logger.info(
-                        "Filtered batch ELAN export item_id=%s groups=%d "
-                        "cluster_groups=%d warnings=%d",
-                        item.id.hex,
-                        len(filter_result.groups),
-                        len(filter_result.cluster_groups),
-                        len(filter_result.warnings),
-                    )
-                    archive.writestr(archive_path, filtered_elan)
+                    if apply_filtering:
+                        elan, filter_result = filter_eaf_xml(elan)
+                        logger.info(
+                            "Filtered batch ELAN export item_id=%s groups=%d "
+                            "cluster_groups=%d warnings=%d",
+                            item.id.hex,
+                            len(filter_result.groups),
+                            len(filter_result.cluster_groups),
+                            len(filter_result.warnings),
+                        )
+                    archive.writestr(archive_path, elan)
                     report["exported"].append(
                         {"item_id": item.id.hex, "path": archive_path}
                     )
@@ -679,7 +688,8 @@ class VideoBatchExportElan(View):
                     json.dumps(report, indent=2),
                 )
 
-        filename = f"{slugify(batch.name) or batch.id.hex}-elan.zip"
+        filename_suffix = "elan" if apply_filtering else "raw-elan"
+        filename = f"{slugify(batch.name) or batch.id.hex}-{filename_suffix}.zip"
         response = HttpResponse(buffer.getvalue(), content_type="application/zip")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         response["X-Exported-Count"] = str(len(report["exported"]))
