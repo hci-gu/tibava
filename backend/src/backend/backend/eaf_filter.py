@@ -37,7 +37,7 @@ PLAIN_NUMERIC_VALUE_TIER_IDS = (
 )
 MERGED_TRANSCRIPT_TIER_IDS = ("Transcript", "Whisper Transcript")
 CONSOLIDATED_OCR_TIER_ID = "OCR"
-_CLUSTER_TIER_RE = re.compile(r"^Cluster\s+\d+$")
+_CLUSTER_TIER_RE = re.compile(r"^(?:Cluster|PCluster|FCluster)\s+\d+$")
 
 _XSI_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"
 _NUMBER_RE = re.compile(
@@ -366,7 +366,7 @@ def discover_groups(
 def discover_cluster_groups(
     root: ET.Element, time_values: dict[str, int]
 ) -> list[tuple[TierInfo, list[TierInfo]]]:
-    """Discover empty parent tiers followed by aligned ``Cluster N`` score tiers."""
+    """Discover empty parent tiers followed by aligned cluster score tiers."""
 
     tiers = [_tier_info(tier, time_values) for tier in _children(root, "TIER")]
     groups: list[tuple[TierInfo, list[TierInfo]]] = []

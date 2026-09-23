@@ -114,6 +114,30 @@ class FilteringTests(unittest.TestCase):
         self.assertEqual(result.cluster_groups[0].filtered_values, 1)
         self.assertEqual(result.cluster_groups[0].annotations_created, 2)
 
+    def test_qualified_place_and_face_cluster_tiers_are_merged(self) -> None:
+        tree = (
+            EafFixture()
+            .add_tier("Place Clustering", [])
+            .add_tier("PCluster 1", [(0, 100, "value:0.8")])
+            .add_tier("PCluster 2", [(0, 100, "value:0.2")])
+            .add_tier("Between", [(0, 100, "untouched")])
+            .add_tier("Face Clustering", [])
+            .add_tier("FCluster 1", [(0, 100, "value:0.7")])
+            .tree()
+        )
+
+        result = filterer.filter_tree(tree, 0.5)
+
+        self.assertEqual(tier_values(tree, "Place Clustering"), ["PCluster 1"])
+        self.assertEqual(tier_values(tree, "Face Clustering"), ["FCluster 1"])
+        remaining_tiers = {
+            tier.get("TIER_ID") for tier in tree.getroot().findall("TIER")
+        }
+        self.assertNotIn("PCluster 1", remaining_tiers)
+        self.assertNotIn("PCluster 2", remaining_tiers)
+        self.assertNotIn("FCluster 1", remaining_tiers)
+        self.assertEqual(len(result.cluster_groups), 2)
+
     def test_ocr_results_are_concatenated_once_per_time_window(self) -> None:
         tree = (
             EafFixture()
