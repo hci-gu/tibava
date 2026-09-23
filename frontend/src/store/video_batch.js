@@ -85,12 +85,14 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         .get(`${config.API_LOCATION}/video/batch/list`)
         .then((res) => {
           if (res.data.status === "ok") {
-            this.batches = {};
-            this.batchList = [];
+            const batches = {};
+            const batchList = [];
             res.data.entries.forEach((batch) => {
-              Vue.set(this.batches, batch.id, batch);
-              this.batchList.push(batch.id);
+              batches[batch.id] = { ...this.batches[batch.id], ...batch };
+              batchList.push(batch.id);
             });
+            this.batches = batches;
+            this.batchList = batchList;
           }
         })
         .finally(() => {
@@ -98,7 +100,6 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         });
     },
     async fetch(batchId, { summary = false } = {}) {
-      if (this.isLoading) return;
       this.isLoading = true;
       return axios
         .get(`${config.API_LOCATION}/video/batch/get`, {
@@ -107,12 +108,7 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         .then((res) => {
           if (res.data.status === "ok") {
             const entry = res.data.entry;
-            const current = this.batches[entry.id];
-            Vue.set(
-              this.batches,
-              entry.id,
-              summary && current ? { ...current, ...entry } : entry
-            );
+            Vue.set(this.batches, entry.id, entry);
             if (!this.batchList.includes(res.data.entry.id)) {
               this.batchList.push(res.data.entry.id);
             }
@@ -121,6 +117,18 @@ export const useVideoBatchStore = defineStore("videoBatch", {
         .finally(() => {
           this.isLoading = false;
         });
+    },
+    async fetchItems(batchId, params) {
+      const response = await axios.get(`${config.API_LOCATION}/video/batch/items`, {
+        params: { id: batchId, ...params },
+      });
+      return response.data;
+    },
+    async fetchItemIds(batchId, params) {
+      const response = await axios.get(`${config.API_LOCATION}/video/batch/items/ids`, {
+        params: { id: batchId, ...params },
+      });
+      return response.data.entries;
     },
     async uploadSharedInput({ batchId, file }) {
       const formData = new FormData();
@@ -252,9 +260,10 @@ export const useVideoBatchStore = defineStore("videoBatch", {
             );
             const disposition = archive.headers["content-disposition"] || "";
             const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+            const exportBaseName = (batchName || batchId).slice(0, 64);
             const filename = filenameMatch
               ? filenameMatch[1]
-              : `${batchName || batchId}-${applyFiltering ? "elan" : "raw-elan"}.zip`;
+              : `${exportBaseName}-${applyFiltering ? "elan" : "raw-elan"}.zip`;
             const url = URL.createObjectURL(
               new Blob([archive.data], { type: "application/zip" })
             );

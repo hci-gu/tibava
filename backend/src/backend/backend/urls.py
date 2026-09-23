@@ -19,6 +19,8 @@ urlpatterns = [
     ),
     path("video/batch/list", views.VideoBatchList.as_view(), name="video_batch_list"),
     path("video/batch/get", views.VideoBatchGet.as_view(), name="video_batch_get"),
+    path("video/batch/items", views.VideoBatchItems.as_view(), name="video_batch_items"),
+    path("video/batch/items/ids", views.VideoBatchItemIds.as_view(), name="video_batch_item_ids"),
     path(
         "video/batch/export-elan",
         views.VideoBatchExportElan.as_view(),

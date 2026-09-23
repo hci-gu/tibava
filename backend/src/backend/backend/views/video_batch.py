@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 from django.core.cache import cache
+from django.db.models import Count, Q
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.utils.text import slugify
 from django.views import View
@@ -49,6 +50,72 @@ from backend.views.video_export import ElanExportError, VideoExport
 
 logger = logging.getLogger(__name__)
 
+ITEM_STATUS_CODES = {label: code for code, label in VideoBatchItem.STATUS.items()}
+PLUGIN_STATUS_CODES = {label: code for code, label in VideoBatchPluginRun.STATUS.items()}
+
+
+def filtered_batch_items(batch, filters):
+    items = batch.items.all()
+    status = filters.get("status") or "All"
+    if status != "All":
+        status_filter = Q()
+        if status in ITEM_STATUS_CODES:
+            status_filter |= Q(ingest_status=ITEM_STATUS_CODES[status])
+        if status in PLUGIN_STATUS_CODES:
+            status_filter |= Q(plugin_runs__status=PLUGIN_STATUS_CODES[status])
+        items = items.filter(status_filter).distinct() if status_filter else items.none()
+
+    folder = filters.get("folder")
+    if folder is not None:
+        folder = str(folder).strip("/")
+        items = (
+            items.filter(original_path__startswith=f"{folder}/")
+            if folder
+            else items.exclude(original_path__contains="/")
+        )
+
+    search = (filters.get("search") or "").strip()
+    if search:
+        items = items.filter(
+            Q(original_path__icontains=search)
+            | Q(original_filename__icontains=search)
+        )
+    return items
+
+
+def batch_detail_summary(batch):
+    item_counts = {status: 0 for status in ITEM_STATUS_CODES}
+    folders = {}
+    for original_path, status, video_id in batch.items.values_list(
+        "original_path", "ingest_status", "video_id"
+    ):
+        item_counts[VideoBatchItem.STATUS[status]] += 1
+        folder_path = original_path.rpartition("/")[0]
+        folder = folders.setdefault(
+            folder_path, {"path": folder_path, "count": 0, "ready_count": 0}
+        )
+        folder["count"] += 1
+        if status == VideoBatchItem.STATUS_READY and video_id:
+            folder["ready_count"] += 1
+
+    plugin_counts = {status: 0 for status in PLUGIN_STATUS_CODES}
+    for row in batch.plugin_runs.values("status").annotate(count=Count("id")):
+        plugin_counts[VideoBatchPluginRun.STATUS[row["status"]]] = row["count"]
+
+    plugin_columns = []
+    for plugin in batch.plugin_runs.order_by("step_index", "plugin").values_list(
+        "plugin", flat=True
+    ).distinct():
+        if plugin not in plugin_columns:
+            plugin_columns.append(plugin)
+
+    return {
+        "item_status_counts": item_counts,
+        "plugin_status_counts": plugin_counts,
+        "folders": list(folders.values()),
+        "plugin_columns": plugin_columns,
+    }
+
 
 def elan_archive_path(item, used_paths):
     normalized_path = normalize_zip_member_name(
@@ -71,6 +138,12 @@ def elan_archive_path(item, used_paths):
         index += 1
     used_paths.add(candidate.casefold())
     return candidate
+
+
+def elan_export_filename(batch, apply_filtering):
+    batch_name = (slugify(batch.name) or batch.id.hex)[:64].rstrip("-")
+    suffix = "elan" if apply_filtering else "raw-elan"
+    return f"{batch_name or batch.id.hex[:12]}-{suffix}.zip"
 
 
 def parse_batch_paths(request):
@@ -198,7 +271,13 @@ def ready_item_ids_for_scope(batch, scope):
             return {"status": "error", "type": "invalid_item_ids"}
         return {"status": "ok", "item_ids": item_ids}
 
-    if scope_type == "folder":
+    if scope_type == "filtered":
+        items = filtered_batch_items(batch, scope).filter(
+            ingest_status=VideoBatchItem.STATUS_READY,
+            video__isnull=False,
+        )
+
+    elif scope_type == "folder":
         folder_path = (scope.get("folder_path") or "").strip("/")
         include_subfolders = scope.get("include_subfolders", True)
         if folder_path:
@@ -524,18 +603,106 @@ class VideoBatchGet(View):
                 return JsonResponse({"status": "error", "type": "not_exist"}, status=500)
 
             summary_only = request.GET.get("summary", "false").lower() == "true"
+            entry = batch.to_dict(
+                include_items=not summary_only,
+                include_videos=not summary_only,
+            )
+            if summary_only:
+                entry.update(batch_detail_summary(batch))
             return JsonResponse(
                 {
                     "status": "ok",
-                    "entry": batch.to_dict(
-                        include_items=not summary_only,
-                        include_videos=not summary_only,
-                    ),
+                    "entry": entry,
                 }
             )
         except Exception:
             logger.exception("Failed to get video batch")
             return JsonResponse({"status": "error"}, status=500)
+
+
+class VideoBatchItems(View):
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return JsonResponse({"status": "error", "type": "not_authenticated"}, status=403)
+        try:
+            batch = VideoBatch.objects.get(id=request.GET.get("id"), owner=request.user)
+        except (ValueError, VideoBatch.DoesNotExist):
+            return JsonResponse({"status": "error", "type": "not_exist"}, status=404)
+
+        try:
+            page = max(1, int(request.GET.get("page", 1)))
+            page_size = int(request.GET.get("page_size", 50))
+            if page_size < 1 or page_size > 100:
+                raise ValueError
+        except ValueError:
+            return JsonResponse({"status": "error", "type": "invalid_page"}, status=400)
+
+        items = filtered_batch_items(batch, request.GET)
+        total = items.count()
+        ready_count = items.filter(
+            ingest_status=VideoBatchItem.STATUS_READY,
+            video__isnull=False,
+        ).count()
+        page = min(page, max(1, (total + page_size - 1) // page_size))
+        sort_fields = {
+            "original_path": "original_path",
+            "original_filename": "original_filename",
+            "ingest_status": "ingest_status",
+            "date": "date",
+        }
+        sort_field = sort_fields.get(request.GET.get("sort_by"), "original_path")
+        if request.GET.get("sort_desc") == "true":
+            sort_field = f"-{sort_field}"
+        start = (page - 1) * page_size
+        page_items = list(
+            items.select_related("video")
+            .order_by(sort_field, "id")[start : start + page_size]
+        )
+        item_ids = [item.id for item in page_items]
+        plugin_runs = VideoBatchPluginRun.objects.filter(
+            batch=batch, item_id__in=item_ids
+        ).select_related("item", "item__video")
+        return JsonResponse(
+            {
+                "status": "ok",
+                "items": [item.to_dict(include_video=True) for item in page_items],
+                "plugin_runs": [run.to_dict() for run in plugin_runs],
+                "total": total,
+                "ready_count": ready_count,
+                "page": page,
+                "page_size": page_size,
+            }
+        )
+
+
+class VideoBatchItemIds(View):
+    def get(self, request):
+        if not request.user.is_authenticated:
+            return JsonResponse({"status": "error", "type": "not_authenticated"}, status=403)
+        try:
+            batch = VideoBatch.objects.get(id=request.GET.get("id"), owner=request.user)
+        except (ValueError, VideoBatch.DoesNotExist):
+            return JsonResponse({"status": "error", "type": "not_exist"}, status=404)
+
+        folder = request.GET.get("folder")
+        exact_folder = request.GET.get("exact_folder") == "true"
+        if exact_folder and folder is None:
+            return JsonResponse({"status": "error", "type": "missing_folder"}, status=400)
+        entries = []
+        for item_id, original_path, status, video_id in filtered_batch_items(
+            batch, request.GET
+        ).values_list("id", "original_path", "ingest_status", "video_id"):
+            if exact_folder and original_path.rpartition("/")[0] != folder.strip("/"):
+                continue
+            entries.append(
+                {
+                    "id": item_id.hex,
+                    "original_path": original_path,
+                    "ingest_status": VideoBatchItem.STATUS[status],
+                    "video_id": video_id.hex if video_id else None,
+                }
+            )
+        return JsonResponse({"status": "ok", "entries": entries})
 
 
 class VideoBatchExportElan(View):
@@ -578,8 +745,7 @@ class VideoBatchExportElan(View):
         if data.get("async"):
             job_id = uuid.uuid4().hex
             archive_path = get_batch_dir(batch.id) / "elan-exports" / f"{job_id}.zip"
-            filename_suffix = "elan" if apply_filtering else "raw-elan"
-            filename = f"{slugify(batch.name) or batch.id.hex}-{filename_suffix}.zip"
+            filename = elan_export_filename(batch, apply_filtering)
             total = items.count()
             cache.set(
                 elan_export_cache_key(job_id),
@@ -688,8 +854,7 @@ class VideoBatchExportElan(View):
                     json.dumps(report, indent=2),
                 )
 
-        filename_suffix = "elan" if apply_filtering else "raw-elan"
-        filename = f"{slugify(batch.name) or batch.id.hex}-{filename_suffix}.zip"
+        filename = elan_export_filename(batch, apply_filtering)
         response = HttpResponse(buffer.getvalue(), content_type="application/zip")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
         response["X-Exported-Count"] = str(len(report["exported"]))

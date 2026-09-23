@@ -72,7 +72,7 @@
           </v-col>
 
           <v-col cols="12" md="8">
-            <div class="text-caption mb-2">{{ itemIds.length }} videos - {{ scopeLabel }}</div>
+            <div class="text-caption mb-2">{{ targetCount }} videos - {{ scopeLabel }}</div>
             <v-list dense outlined class="plugin-list">
               <v-list-item
                 v-for="(step, index) in steps"
@@ -313,6 +313,14 @@ export default {
       type: Array,
       default: () => [],
     },
+    scopeSelection: {
+      type: Object,
+      default: null,
+    },
+    scopeCount: {
+      type: Number,
+      default: 0,
+    },
     scopeLabel: {
       type: String,
       default: "current scope",
@@ -346,6 +354,9 @@ export default {
     ]);
   },
   computed: {
+    targetCount() {
+      return this.scopeSelection ? this.scopeCount : this.itemIds.length;
+    },
     catalog() {
       return clonePluginCatalog(this.videoBatchStore.pluginCatalog);
     },
@@ -602,7 +613,7 @@ export default {
       return payload;
     },
     scope() {
-      return {
+      return this.scopeSelection || {
         type: "item_ids",
         item_ids: this.itemIds,
       };
@@ -610,7 +621,7 @@ export default {
     async validate() {
       this.validationResult = null;
       this.validationError = "";
-      if (!this.batchId || !this.itemIds.length || !this.steps.length) return;
+      if (!this.batchId || !this.targetCount || !this.steps.length) return;
 
       try {
         await this.ensureSharedInputs();
@@ -767,6 +778,9 @@ export default {
       },
     },
     itemIds() {
+      this.scheduleValidation();
+    },
+    scopeSelection() {
       this.scheduleValidation();
     },
   },

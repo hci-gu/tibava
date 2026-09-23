@@ -62,6 +62,8 @@ from backend.views.video_batch import (
     VideoBatchExportElanDownload,
     VideoBatchExportElanStatus,
     VideoBatchGet,
+    VideoBatchItems,
+    VideoBatchItemIds,
     VideoBatchList,
     VideoBatchPluginCatalog,
     VideoBatchPresetDelete,
@@ -74,6 +76,7 @@ from backend.views.video_batch import (
     VideoBatchSharedInputUpload,
     VideoBatchValidatePluginSet,
     VideoBatchUpload,
+    ready_item_ids_for_scope,
 )
 
 
@@ -728,6 +731,115 @@ class VideoBatchAPIDatabaseTests(TestCase):
             TimelineSegment.objects.create(timeline=shots, start=0, end=1)
             VideoAnalysisState.objects.create(video=video, selected_shots=shots)
         return item
+
+    def test_batch_detail_summary_and_items_are_paginated(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Many videos")
+        first = self.create_ready_batch_item(batch, "a/first.mp4", with_shots=False)
+        second = self.create_ready_batch_item(batch, "b/second.mp4", with_shots=False)
+        VideoBatchItem.objects.create(
+            batch=batch,
+            original_filename="broken.mp4",
+            original_path="b/broken.mp4",
+            ingest_status=VideoBatchItem.STATUS_ERROR,
+        )
+        VideoBatchPluginRun.objects.create(
+            batch=batch,
+            item=first,
+            preset="default",
+            plugin="clip",
+            status=VideoBatchPluginRun.STATUS_DONE,
+        )
+        VideoBatchPluginRun.objects.create(
+            batch=batch,
+            item=second,
+            preset="default",
+            plugin="clip",
+            status=VideoBatchPluginRun.STATUS_ERROR,
+        )
+        batch.refresh_counters()
+
+        summary_request = self.authenticated(
+            self.factory.get("/video/batch/get", {"id": batch.id.hex, "summary": "true"})
+        )
+        summary = json.loads(VideoBatchGet.as_view()(summary_request).content)["entry"]
+        self.assertNotIn("items", summary)
+        self.assertNotIn("plugin_runs", summary)
+        self.assertEqual(summary["item_status_counts"]["READY"], 2)
+        self.assertEqual(summary["plugin_status_counts"]["ERROR"], 1)
+        self.assertEqual(summary["plugin_columns"], ["clip"])
+        self.assertEqual(
+            {folder["path"]: folder["count"] for folder in summary["folders"]},
+            {"a": 1, "b": 2},
+        )
+
+        page_request = self.authenticated(
+            self.factory.get(
+                "/video/batch/items",
+                {"id": batch.id.hex, "page": 1, "page_size": 1},
+            )
+        )
+        page = json.loads(VideoBatchItems.as_view()(page_request).content)
+        self.assertEqual(page["total"], 3)
+        self.assertEqual(page["ready_count"], 2)
+        self.assertEqual([item["id"] for item in page["items"]], [first.id.hex])
+        self.assertEqual([run["item_id"] for run in page["plugin_runs"]], [first.id.hex])
+
+        next_page_request = self.authenticated(
+            self.factory.get(
+                "/video/batch/items",
+                {"id": batch.id.hex, "page": 2, "page_size": 1},
+            )
+        )
+        next_page = json.loads(VideoBatchItems.as_view()(next_page_request).content)
+        self.assertEqual(next_page["page"], 2)
+        self.assertEqual(next_page["items"][0]["original_path"], "b/broken.mp4")
+        self.assertEqual(next_page["plugin_runs"], [])
+
+        filtered_request = self.authenticated(
+            self.factory.get(
+                "/video/batch/items",
+                {"id": batch.id.hex, "status": "ERROR", "search": "second"},
+            )
+        )
+        filtered = json.loads(VideoBatchItems.as_view()(filtered_request).content)
+        self.assertEqual(filtered["total"], 1)
+        self.assertEqual(filtered["items"][0]["id"], second.id.hex)
+        folder_request = self.authenticated(
+            self.factory.get(
+                "/video/batch/items", {"id": batch.id.hex, "folder": "a"}
+            )
+        )
+        folder_page = json.loads(VideoBatchItems.as_view()(folder_request).content)
+        self.assertEqual(folder_page["total"], 1)
+        self.assertEqual(folder_page["ready_count"], 1)
+        self.assertEqual(
+            ready_item_ids_for_scope(
+                batch, {"type": "filtered", "status": "ERROR", "search": "second"}
+            )["item_ids"],
+            [second.id],
+        )
+
+    def test_batch_item_ids_are_scoped_to_owner_and_folder(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Folders")
+        first = self.create_ready_batch_item(batch, "a/first.mp4", with_shots=False)
+        self.create_ready_batch_item(batch, "a/sub/second.mp4", with_shots=False)
+        request = self.authenticated(
+            self.factory.get(
+                "/video/batch/items/ids",
+                {"id": batch.id.hex, "folder": "a", "exact_folder": "true"},
+            )
+        )
+        response = VideoBatchItemIds.as_view()(request)
+        self.assertEqual(
+            [entry["id"] for entry in json.loads(response.content)["entries"]],
+            [first.id.hex],
+        )
+
+        other_request = self.authenticated(
+            self.factory.get("/video/batch/items", {"id": batch.id.hex}),
+            user=self.other_user,
+        )
+        self.assertEqual(VideoBatchItems.as_view()(other_request).status_code, 404)
 
     @override_settings(BATCH_UPLOAD_ROOT=tempfile.gettempdir())
     def test_multi_file_batch_upload_persists_paths_and_items(self):

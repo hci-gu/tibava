@@ -132,16 +132,16 @@
       <v-row class="mb-4" align="center">
         <v-col cols="12">
           <v-toolbar dense flat class="selection-toolbar">
-            <span class="text-caption mr-4">{{ selectedItemIds.length }} / {{ tableItems.length }} selected</span>
+            <span class="text-caption mr-4">{{ selectedItemIds.length }} selected · {{ itemsTotal }} matches</span>
             <v-btn small outlined class="mr-2" @click="selectVisible">
               <v-icon left small>mdi-checkbox-multiple-marked-outline</v-icon>
-              Select visible
+              Select page
             </v-btn>
             <v-btn small outlined class="mr-2" @click="invertVisibleSelection">
               <v-icon left small>mdi-checkbox-multiple-blank-outline</v-icon>
               Invert visible
             </v-btn>
-            <v-btn small outlined class="mr-2" :disabled="!folderFilter" @click="selectCurrentFolder">
+            <v-btn small outlined class="mr-2" :disabled="folderFilter === null" @click="selectCurrentFolder">
               <v-icon left small>mdi-folder-check-outline</v-icon>
               Select folder
             </v-btn>
@@ -171,16 +171,22 @@
         </v-col>
       </v-row>
 
-      <v-alert v-if="failedItems.length" dense outlined type="error" class="mb-4">
-        {{ failedItems.length }} item{{ failedItems.length === 1 ? "" : "s" }} need attention.
+      <v-alert v-if="batch.failed_count" dense outlined type="error" class="mb-4">
+        {{ batch.failed_count }} item{{ batch.failed_count === 1 ? "" : "s" }} need attention.
+      </v-alert>
+
+      <v-alert v-if="itemsError" dense outlined type="error" class="mb-4">
+        {{ itemsError }}
       </v-alert>
 
       <v-data-table
         v-model="selectedRows"
         :headers="tableHeaders"
         :items="tableItems"
-        :loading="videoBatchStore.isLoading"
-        :items-per-page="50"
+        :loading="itemsLoading"
+        :options.sync="tableOptions"
+        :server-items-length="itemsTotal"
+        :footer-props="{ 'items-per-page-options': [25, 50, 100] }"
         item-key="id"
         show-select
         group-by="folder_path"
@@ -207,7 +213,7 @@
             ></v-checkbox>
             <span class="folder-label" @click="toggle">
               <v-icon small class="mr-1">{{ isOpen ? "mdi-folder-open-outline" : "mdi-folder-outline" }}</v-icon>
-              {{ group || "Root" }} ({{ folderItems(group).length }})
+              {{ group || "Root" }} ({{ folderItems(group).length }} on page)
             </span>
             <v-btn icon small title="Filter folder" @click.stop="folderFilter = group">
               <v-icon small>mdi-filter-outline</v-icon>
@@ -216,7 +222,7 @@
               icon
               small
               title="Run plugins for folder"
-              :disabled="!canRunBatchPlugins"
+              :disabled="!canRunBatchPlugins || !readyCountForFolder(group)"
               @click.stop="openCustomPluginSetForFolder(group)"
             >
               <v-icon small>mdi-playlist-play</v-icon>
@@ -288,14 +294,14 @@
                 :disabled="!readySelectedItemIds.length"
               ></v-radio>
               <v-radio
-                :label="`Current folder (${currentFolderReadyItemIds.length})`"
+                :label="`Current folder (${currentFolderReadyCount})`"
                 value="folder"
-                :disabled="!folderFilter || !currentFolderReadyItemIds.length"
+                :disabled="folderFilter === null || !currentFolderReadyCount"
               ></v-radio>
               <v-radio
-                :label="`Filtered ready videos (${filteredReadyItemIds.length})`"
+                :label="`Filtered ready videos (${readyFilteredCount})`"
                 value="filtered"
-                :disabled="!filteredReadyItemIds.length"
+                :disabled="!readyFilteredCount"
               ></v-radio>
             </v-radio-group>
           </v-card-text>
@@ -316,8 +322,10 @@
         v-model="showCustomPluginSet"
         :batch-id="batchId"
         :item-ids="customPluginItemIds"
+        :scope-selection="customPluginScope"
+        :scope-count="customPluginScopeCount"
         :scope-label="customPluginScopeLabel"
-        @ran="fetchBatch"
+        @ran="refreshBatch"
       />
 
       <v-dialog v-model="confirmCancel" max-width="420">
@@ -364,10 +372,29 @@ export default {
       folderFilter: null,
       search: "",
       selectedItemIds: [],
+      selectedItemDetails: {},
+      pageItems: [],
+      pagePluginRuns: [],
+      itemsTotal: 0,
+      readyFilteredCount: 0,
+      itemsLoading: false,
+      itemsError: "",
+      tableOptions: {
+        page: 1,
+        itemsPerPage: 50,
+        sortBy: [],
+        sortDesc: [],
+      },
+      pageRequestSerial: 0,
+      lastPageQuery: null,
+      searchTimer: null,
+      refreshInProgress: false,
       presetScopeMode: "all",
       presetToRun: null,
       showCustomPluginSet: false,
       customPluginItemIds: [],
+      customPluginScope: null,
+      customPluginScopeCount: 0,
       customPluginScopeLabel: "all ready videos",
       timer: null,
       confirmRunPreset: false,
@@ -388,11 +415,45 @@ export default {
     };
   },
   mounted() {
-    this.fetchBatch(false);
-    this.timer = setInterval(() => this.fetchBatch(true), 3000);
+    this.fetchSummary();
+    this.fetchPage();
+    this.timer = setInterval(() => {
+      if (this.shouldPoll) this.refreshBatch();
+    }, 10000);
   },
   beforeDestroy() {
     if (this.timer) clearInterval(this.timer);
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.pageRequestSerial += 1;
+  },
+  watch: {
+    batchId() {
+      this.pageItems = [];
+      this.pagePluginRuns = [];
+      this.itemsTotal = 0;
+      this.selectedItemIds = [];
+      this.selectedItemDetails = {};
+      this.lastPageQuery = null;
+      this.tableOptions.page = 1;
+      this.fetchSummary();
+      this.fetchPage();
+    },
+    filter() {
+      this.resetPage();
+    },
+    folderFilter() {
+      this.resetPage();
+    },
+    search() {
+      if (this.searchTimer) clearTimeout(this.searchTimer);
+      this.searchTimer = setTimeout(() => this.resetPage(), 300);
+    },
+    tableOptions: {
+      deep: true,
+      handler() {
+        this.fetchPage();
+      },
+    },
   },
   computed: {
     batchId() {
@@ -427,29 +488,16 @@ export default {
       }
       return presets;
     },
-    filteredItems() {
-      if (!this.batch || !this.batch.items) return [];
-      const search = (this.search || "").toLowerCase();
-      return this.batch.items.filter((item) => {
-        const folderPath = this.folderPathForItem(item);
-        const pluginStatuses = this.pluginsForItem(item).map((plugin) => plugin.status);
-        const matchesFilter =
-          this.filter === "All" ||
-          item.ingest_status === this.filter ||
-          pluginStatuses.includes(this.filter);
-        const matchesFolder =
-          !this.folderFilter ||
-          folderPath === this.folderFilter ||
-          folderPath.startsWith(`${this.folderFilter}/`);
-        const matchesSearch =
-          !search ||
-          item.original_path.toLowerCase().includes(search) ||
-          item.original_filename.toLowerCase().includes(search);
-        return matchesFilter && matchesFolder && matchesSearch;
+    pluginsByItem() {
+      const plugins = {};
+      this.pagePluginRuns.forEach((plugin) => {
+        if (!plugins[plugin.item_id]) plugins[plugin.item_id] = [];
+        plugins[plugin.item_id].push(plugin);
       });
+      return plugins;
     },
     tableItems() {
-      return this.filteredItems.map((item) => {
+      return this.pageItems.map((item) => {
         const plugin_statuses = {};
         this.pluginsForItem(item).forEach((plugin) => {
           plugin_statuses[plugin.plugin] = plugin;
@@ -468,20 +516,13 @@ export default {
       });
     },
     folderOptions() {
-      const folders = new Map();
-      this.tableSourceItems.forEach((item) => {
-        const folderPath = this.folderPathForItem(item);
-        folders.set(folderPath, (folders.get(folderPath) || 0) + 1);
-      });
-      return Array.from(folders.entries())
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([value, count]) => ({
-          value,
-          label: `${value || "Root"} (${count})`,
+      return (this.batch && this.batch.folders ? this.batch.folders : [])
+        .slice()
+        .sort((a, b) => a.path.localeCompare(b.path))
+        .map(({ path, count }) => ({
+          value: path,
+          label: `${path || "Root"} (${count})`,
         }));
-    },
-    tableSourceItems() {
-      return this.batch && this.batch.items ? this.batch.items : [];
     },
     selectedRows: {
       get() {
@@ -489,46 +530,32 @@ export default {
         return this.tableItems.filter((item) => selected.has(item.id));
       },
       set(rows) {
-        this.selectedItemIds = rows.map((row) => row.id);
+        const pageIds = new Set(this.pageItems.map((item) => item.id));
+        const selected = new Set(rows.map((row) => row.id));
+        const ids = new Set(this.selectedItemIds.filter((id) => !pageIds.has(id)));
+        selected.forEach((id) => ids.add(id));
+        this.selectedItemIds = Array.from(ids);
+        this.pageItems.forEach((item) => {
+          if (selected.has(item.id)) this.$set(this.selectedItemDetails, item.id, item);
+          else this.$delete(this.selectedItemDetails, item.id);
+        });
       },
     },
     selectedItems() {
-      const selected = new Set(this.selectedItemIds);
-      return this.tableSourceItems.filter((item) => selected.has(item.id));
+      return this.selectedItemIds
+        .map((id) => this.selectedItemDetails[id])
+        .filter(Boolean);
     },
     readySelectedItemIds() {
       return this.selectedItems
-        .filter((item) => item.ingest_status === "READY" && item.video)
+        .filter((item) => item.ingest_status === "READY" && item.video_id)
         .map((item) => item.id);
     },
-    filteredReadyItemIds() {
-      return this.tableItems
-        .filter((item) => item.ingest_status === "READY" && item.video)
-        .map((item) => item.id);
-    },
-    currentFolderReadyItemIds() {
-      if (!this.folderFilter) return [];
-      return this.tableSourceItems
-        .filter((item) => {
-          const folderPath = this.folderPathForItem(item);
-          return (
-            item.ingest_status === "READY" &&
-            item.video &&
-            (folderPath === this.folderFilter || folderPath.startsWith(`${this.folderFilter}/`))
-          );
-        })
-        .map((item) => item.id);
+    currentFolderReadyCount() {
+      return this.folderFilter === null ? 0 : this.readyCountForFolder(this.folderFilter);
     },
     pluginColumns() {
-      if (!this.batch || !this.batch.plugin_runs) return [];
-      const columns = [];
-      this.batch.plugin_runs
-        .slice()
-        .sort((a, b) => a.step_index - b.step_index || a.plugin.localeCompare(b.plugin))
-        .forEach((plugin) => {
-          if (!columns.includes(plugin.plugin)) columns.push(plugin.plugin);
-        });
-      return columns;
+      return this.batch && this.batch.plugin_columns ? this.batch.plugin_columns : [];
     },
     tableHeaders() {
       return [
@@ -545,21 +572,11 @@ export default {
           sortable: false,
           width: 150,
         })),
-        { text: "Error", value: "error_summary" },
+        { text: "Error", value: "error_summary", sortable: false },
       ];
     },
-    failedItems() {
-      if (!this.batch || !this.batch.items) return [];
-      return this.batch.items.filter((item) => item.ingest_status === "ERROR");
-    },
     hasReadyVideos() {
-      return Boolean(
-        this.batch &&
-          this.batch.items &&
-          this.batch.items.some(
-            (item) => item.ingest_status === "READY" && item.video
-          )
-      );
+      return Boolean(this.batch && this.batch.ready_count);
     },
     canRunBatchPlugins() {
       return Boolean(
@@ -582,16 +599,22 @@ export default {
       const summaries = itemStatuses.map((status) => ({
         key: `item-${status}`,
         label: status,
-        count: this.batch.items.filter((item) => item.ingest_status === status).length,
+        count: (this.batch.item_status_counts || {})[status] || 0,
       }));
       pluginStatuses.forEach((status) => {
         summaries.push({
           key: `plugin-${status}`,
           label: status,
-          count: this.batch.plugin_runs.filter((plugin) => plugin.status === status).length,
+          count: (this.batch.plugin_status_counts || {})[status] || 0,
         });
       });
       return summaries;
+    },
+    shouldPoll() {
+      if (!this.batch || this.batch.status === "CANCELLED") return false;
+      const pluginCounts = this.batch.plugin_status_counts || {};
+      return ["UPLOADING", "INGESTING", "RUNNING"].includes(this.batch.status) ||
+        Boolean(pluginCounts.RUNNING || pluginCounts.PENDING);
     },
     batchProgress() {
       if (!this.batch || !this.batch.total_count) return 0;
@@ -602,8 +625,68 @@ export default {
     ...mapStores(useVideoBatchStore),
   },
   methods: {
-    fetchBatch(summary = false) {
-      this.videoBatchStore.fetch(this.batchId, { summary });
+    async fetchSummary() {
+      try {
+        await this.videoBatchStore.fetch(this.batchId, { summary: true });
+      } catch (error) {
+        this.itemsError = "The batch summary could not be loaded.";
+      }
+    },
+    pageParams() {
+      const options = this.tableOptions;
+      const params = {
+        page: options.page || 1,
+        page_size: options.itemsPerPage || 50,
+        sort_by: options.sortBy && options.sortBy[0] || "original_path",
+        sort_desc: Boolean(options.sortDesc && options.sortDesc[0]),
+        status: this.filter,
+        search: this.search || "",
+      };
+      if (this.folderFilter !== null) params.folder = this.folderFilter;
+      return params;
+    },
+    async fetchPage(force = false) {
+      const batchId = this.batchId;
+      const params = this.pageParams();
+      const queryKey = `${batchId}:${JSON.stringify(params)}`;
+      if (!force && queryKey === this.lastPageQuery) return;
+      this.lastPageQuery = queryKey;
+      const serial = ++this.pageRequestSerial;
+      this.itemsLoading = true;
+      this.itemsError = "";
+      try {
+        const data = await this.videoBatchStore.fetchItems(batchId, params);
+        if (serial !== this.pageRequestSerial || batchId !== this.batchId) return;
+        this.pageItems = data.items;
+        this.pagePluginRuns = data.plugin_runs;
+        this.itemsTotal = data.total;
+        this.readyFilteredCount = data.ready_count;
+        if (data.page !== this.tableOptions.page) this.tableOptions.page = data.page;
+        this.pageItems.forEach((item) => {
+          if (this.selectedItemIds.includes(item.id)) {
+            this.$set(this.selectedItemDetails, item.id, item);
+          }
+        });
+      } catch (error) {
+        if (serial !== this.pageRequestSerial) return;
+        this.lastPageQuery = null;
+        this.itemsError = "The batch items could not be loaded.";
+      } finally {
+        if (serial === this.pageRequestSerial) this.itemsLoading = false;
+      }
+    },
+    resetPage() {
+      this.tableOptions.page = 1;
+      this.fetchPage();
+    },
+    async refreshBatch() {
+      if (this.refreshInProgress) return;
+      this.refreshInProgress = true;
+      try {
+        await Promise.all([this.fetchSummary(), this.fetchPage(true)]);
+      } finally {
+        this.refreshInProgress = false;
+      }
     },
     folderPathForItem(item) {
       const pathParts = (item.original_path || "").split("/");
@@ -621,48 +704,75 @@ export default {
         some: selectedCount > 0 && selectedCount < items.length,
       };
     },
-    toggleFolderSelection(group) {
-      const items = this.folderItems(group);
+    async toggleFolderSelection(group) {
       const state = this.folderSelectionState(group);
       const ids = new Set(this.selectedItemIds);
-      items.forEach((item) => {
+      let entries;
+      try {
+        entries = await this.videoBatchStore.fetchItemIds(this.batchId, {
+          ...this.pageParams(),
+          folder: group || "",
+          exact_folder: true,
+        });
+      } catch (error) {
+        this.itemsError = "The folder selection could not be loaded.";
+        return;
+      }
+      entries.forEach((item) => {
         if (state.all) {
           ids.delete(item.id);
+          this.$delete(this.selectedItemDetails, item.id);
         } else {
           ids.add(item.id);
+          this.$set(this.selectedItemDetails, item.id, item);
         }
       });
       this.selectedItemIds = Array.from(ids);
     },
     selectVisible() {
       const ids = new Set(this.selectedItemIds);
-      this.tableItems.forEach((item) => ids.add(item.id));
+      this.pageItems.forEach((item) => {
+        ids.add(item.id);
+        this.$set(this.selectedItemDetails, item.id, item);
+      });
       this.selectedItemIds = Array.from(ids);
     },
     invertVisibleSelection() {
       const ids = new Set(this.selectedItemIds);
       this.tableItems.forEach((item) => {
-        if (ids.has(item.id)) ids.delete(item.id);
-        else ids.add(item.id);
+        if (ids.has(item.id)) {
+          ids.delete(item.id);
+          this.$delete(this.selectedItemDetails, item.id);
+        } else {
+          ids.add(item.id);
+          this.$set(this.selectedItemDetails, item.id, item);
+        }
       });
       this.selectedItemIds = Array.from(ids);
     },
-    selectCurrentFolder() {
+    async selectCurrentFolder() {
       const ids = new Set(this.selectedItemIds);
-      this.tableSourceItems
-        .filter((item) => {
-          const folderPath = this.folderPathForItem(item);
-          return folderPath === this.folderFilter || folderPath.startsWith(`${this.folderFilter}/`);
-        })
-        .forEach((item) => ids.add(item.id));
+      let entries;
+      try {
+        entries = await this.videoBatchStore.fetchItemIds(this.batchId, {
+          folder: this.folderFilter,
+        });
+      } catch (error) {
+        this.itemsError = "The folder selection could not be loaded.";
+        return;
+      }
+      entries.forEach((item) => {
+        ids.add(item.id);
+        this.$set(this.selectedItemDetails, item.id, item);
+      });
       this.selectedItemIds = Array.from(ids);
     },
     clearSelection() {
       this.selectedItemIds = [];
+      this.selectedItemDetails = {};
     },
     pluginsForItem(item) {
-      if (!this.batch || !this.batch.plugin_runs) return [];
-      return this.batch.plugin_runs.filter((plugin) => plugin.item_id === item.id);
+      return this.pluginsByItem[item.id] || [];
     },
     getDisplayTime(value) {
       if (!value) return "";
@@ -684,7 +794,7 @@ export default {
         preset: this.presetToRun,
         scope: this.scopeForPresetRun(),
       });
-      this.fetchBatch();
+      this.refreshBatch();
     },
     async openRunPresetDialog() {
       await this.videoBatchStore.fetchPresets();
@@ -698,20 +808,25 @@ export default {
         return { type: "item_ids", item_ids: this.readySelectedItemIds };
       }
       if (this.presetScopeMode === "folder") {
-        return { type: "item_ids", item_ids: this.currentFolderReadyItemIds };
+        return { type: "folder", folder_path: this.folderFilter, include_subfolders: true };
       }
       if (this.presetScopeMode === "filtered") {
-        return { type: "item_ids", item_ids: this.filteredReadyItemIds };
+        return {
+          type: "filtered",
+          status: this.filter,
+          folder: this.folderFilter,
+          search: this.search || "",
+        };
       }
       return { type: "all" };
     },
     async retryFailed() {
       await this.videoBatchStore.retryFailed(this.batchId);
-      this.fetchBatch();
+      this.refreshBatch();
     },
     async retryPluginSteps() {
       await this.videoBatchStore.retryFailedPluginSteps(this.batchId);
-      this.fetchBatch();
+      this.refreshBatch();
     },
     async exportElan(applyFiltering = true) {
       this.exportError = "";
@@ -728,7 +843,7 @@ export default {
     async cancelBatch() {
       this.confirmCancel = false;
       await this.videoBatchStore.cancel(this.batchId);
-      this.fetchBatch();
+      this.refreshBatch();
     },
     async deleteBatch() {
       this.confirmDelete = false;
@@ -736,37 +851,46 @@ export default {
       this.$router.push({ path: "/batches" });
     },
     openSelectedVideos() {
-      const firstVideo = this.selectedItems.find((item) => item.video);
+      const firstVideo = this.selectedItems.find((item) => item.video_id);
       if (firstVideo) {
-        this.$router.push({ path: `/videoanalysis/${firstVideo.video.id}` });
+        this.$router.push({ path: `/videoanalysis/${firstVideo.video_id}` });
       }
     },
     openCustomPluginSetForAll() {
-      this.customPluginItemIds = this.tableSourceItems
-        .filter((item) => item.ingest_status === "READY" && item.video)
-        .map((item) => item.id);
+      this.customPluginItemIds = [];
+      this.customPluginScope = { type: "all" };
+      this.customPluginScopeCount = this.batch.ready_count;
       this.customPluginScopeLabel = "all ready videos";
       this.showCustomPluginSet = true;
     },
     openCustomPluginSetForSelection() {
       this.customPluginItemIds = this.readySelectedItemIds;
+      this.customPluginScope = null;
+      this.customPluginScopeCount = this.readySelectedItemIds.length;
       this.customPluginScopeLabel = "selected ready videos";
       this.showCustomPluginSet = true;
     },
     openCustomPluginSetForFolder(group) {
       const folder = group || "";
-      this.customPluginItemIds = this.tableSourceItems
-        .filter((item) => {
-          const folderPath = this.folderPathForItem(item);
-          return (
-            item.ingest_status === "READY" &&
-            item.video &&
-            (folderPath === folder || (folder && folderPath.startsWith(`${folder}/`)))
-          );
-        })
-        .map((item) => item.id);
+      this.customPluginItemIds = [];
+      this.customPluginScope = {
+        type: "folder",
+        folder_path: folder,
+        include_subfolders: true,
+      };
+      this.customPluginScopeCount = this.readyCountForFolder(folder);
       this.customPluginScopeLabel = folder ? `folder ${folder} and subfolders` : "root folder";
       this.showCustomPluginSet = true;
+    },
+    readyCountForFolder(folderPath) {
+      if (!this.batch || !this.batch.folders) return 0;
+      return this.batch.folders
+        .filter((folder) =>
+          folderPath
+            ? folder.path === folderPath || folder.path.startsWith(`${folderPath}/`)
+            : folder.path === ""
+        )
+        .reduce((count, folder) => count + folder.ready_count, 0);
     },
   },
   components: { ModalBatchPluginSet },
