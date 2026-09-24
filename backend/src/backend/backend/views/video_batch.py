@@ -34,6 +34,7 @@ from backend.utils.batch_upload import (
 )
 from backend.utils.batch_plugin_catalog import list_batch_plugin_catalog, timeline_by_name
 from backend.utils.batch_naming import numbered_batch_video_path
+from backend.utils.batch_export import items_with_completed_preset
 from backend.utils.elan_export import (
     ELAN_EXPORT_CACHE_TIMEOUT,
     build_elan_archive,
@@ -730,9 +731,12 @@ class VideoBatchExportElan(View):
             video__isnull=False,
             video__owner=request.user,
         ).select_related("video")
-        if not items.exists():
+        items = items_with_completed_preset(
+            batch, items.order_by("original_path", "original_filename")
+        )
+        if not items:
             return JsonResponse(
-                {"status": "error", "type": "no_ready_items"}, status=500
+                {"status": "error", "type": "no_complete_items"}, status=400
             )
 
         apply_filtering = data.get("apply_filtering", True)
@@ -745,7 +749,7 @@ class VideoBatchExportElan(View):
             job_id = uuid.uuid4().hex
             archive_path = get_batch_dir(batch.id) / "elan-exports" / f"{job_id}.zip"
             filename = elan_export_filename(batch, apply_filtering)
-            total = items.count()
+            total = len(items)
             cache.set(
                 elan_export_cache_key(job_id),
                 {
@@ -755,6 +759,7 @@ class VideoBatchExportElan(View):
                     "archive_path": str(archive_path),
                     "filename": filename,
                     "apply_filtering": apply_filtering,
+                    "item_ids": [item.id.hex for item in items],
                     "status": "queued",
                     "phase": "queued",
                     "processed": 0,
@@ -783,7 +788,7 @@ class VideoBatchExportElan(View):
 
         buffer = io.BytesIO()
         report = build_elan_archive(
-            items.order_by("original_path", "original_filename"),
+            items,
             buffer,
             apply_filtering=apply_filtering,
         )

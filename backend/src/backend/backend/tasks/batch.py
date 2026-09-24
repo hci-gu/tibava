@@ -64,14 +64,17 @@ def export_batch_elan(job_id):
 
     try:
         batch = VideoBatch.objects.get(id=state["batch_id"])
+        item_query = batch.items.filter(
+            ingest_status=VideoBatchItem.STATUS_READY,
+            video__isnull=False,
+            video__owner=batch.owner,
+        )
+        if "item_ids" in state:
+            item_query = item_query.filter(id__in=state["item_ids"])
         items = list(
-            batch.items.filter(
-                ingest_status=VideoBatchItem.STATUS_READY,
-                video__isnull=False,
-                video__owner=batch.owner,
+            item_query.select_related("video").order_by(
+                "original_path", "original_filename"
             )
-            .select_related("video")
-            .order_by("original_path", "original_filename")
         )
 
         def progress(processed, total, exported, failed, phase):
