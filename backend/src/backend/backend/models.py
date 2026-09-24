@@ -276,6 +276,7 @@ class VideoBatchItem(models.Model):
     )
     original_filename = models.CharField(max_length=512)
     original_path = models.CharField(max_length=1024, blank=True)
+    display_path = models.CharField(max_length=1024, blank=True)
     source_path = models.CharField(max_length=1024, blank=True, null=True)
     file_size = models.BigIntegerField(default=0)
     checksum = models.CharField(max_length=128, blank=True)
@@ -300,12 +301,19 @@ class VideoBatchItem(models.Model):
     )
 
     def to_dict(self, include_video=False, **kwargs):
+        displayed_path = self.display_path or self.original_path
         result = {
             "id": self.id.hex,
             "batch_id": self.batch.id.hex,
             "video_id": self.video.id.hex if self.video else None,
             "original_filename": self.original_filename,
             "original_path": self.original_path,
+            "display_path": displayed_path,
+            "display_filename": (
+                displayed_path.rpartition("/")[2]
+                if self.display_path
+                else self.original_filename
+            ),
             "file_size": self.file_size,
             "checksum": self.checksum,
             "ingest_status": self.STATUS[self.ingest_status],

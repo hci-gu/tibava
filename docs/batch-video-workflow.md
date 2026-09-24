@@ -65,6 +65,23 @@ Rejected zip entries become failed batch items:
 
 Successful entries are extracted to the batch temp directory, ingested into normal `Video` rows, and then the extracted source file is removed.
 
+## Top-20 Batch Names and ELAN Export
+
+For a video at `browsable_raw/Joacim Lamotte/2026-06/02 - Video title.mp4`, the
+batch ELAN archive contains `browsable_raw/Joacim Lamotte/2026-06/02.eaf`.
+The EAF keeps `02 - Video title.mp4` as its media link so the existing video
+package still works. Existing batch rows and video titles are not rewritten.
+
+New uploads with the same channel/month/rank layout store a separate display
+path, `browsable_raw/joacim-lamotte/2026-06/02.mp4`. The batch table, folder
+filter, and ELAN archive use this path. The new EAF media link uses `02.mp4`.
+The original source path and filename remain available for ingest and
+troubleshooting; the upload does not rename the stored video bytes. The rank is
+the monthly top-20 position (`01` through `20`). Other batch path layouts keep their original
+display path, and their EAF falls back to a video UUID filename when a rank
+cannot be derived. Duplicate channel/month/rank paths are reported in
+`export-report.json` rather than silently renamed.
+
 ## Status Meanings
 
 Batch statuses:

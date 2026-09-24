@@ -26,6 +26,7 @@ from backend.models import (
 )
 from backend.plugin_manager import PluginManager
 from backend.tasks.batch import (
+    create_zip_batch_items,
     get_completed_step_outputs,
     ingest_video_batch,
     export_batch_elan,
@@ -41,6 +42,8 @@ from backend.utils.batch_upload import (
     repair_filename_unicode,
 )
 from backend.utils.batch_plugin_catalog import list_batch_plugin_catalog
+from backend.utils.batch_naming import numbered_batch_video_path
+from backend.utils.elan_export import batch_export_paths, build_elan_archive
 from backend.utils.upload import check_extension, download_file, get_file_extension
 from backend.utils.parser import Parser
 from backend.utils.plugin_presets import (
@@ -121,6 +124,64 @@ class ElanTierNameTests(SimpleTestCase):
         self.assertEqual(
             resolve_elan_tier_id(SimpleNamespace(name="Transcript", parent=None)),
             "Transcript",
+        )
+
+
+class BatchElanArchivePathTests(SimpleTestCase):
+    def make_item(self, path, display_path=""):
+        return SimpleNamespace(
+            id=uuid.uuid4(),
+            video_id=uuid.uuid4(),
+            original_path=path,
+            original_filename=Path(path).name,
+            display_path=display_path,
+            video=object(),
+        )
+
+    def test_legacy_video_keeps_channel_folder_and_original_media_link(self):
+        item = self.make_item("browsable_raw/My Channel/2026-09/04 - A very long title 🎥.mp4")
+        self.assertEqual(
+            batch_export_paths(item),
+            ("browsable_raw/My Channel/2026-09/04.eaf", "04 - A very long title 🎥.mp4"),
+        )
+
+    def test_new_numbered_video_matches_eaf_path(self):
+        item = self.make_item(
+            "browsable_raw/My Channel/2026-09/04 - Title.mp4",
+            display_path="browsable_raw/my-channel/2026-09/04.mp4",
+        )
+        self.assertEqual(
+            batch_export_paths(item),
+            ("browsable_raw/my-channel/2026-09/04.eaf", "04.mp4"),
+        )
+
+    def test_duplicate_numbers_are_reported_without_renaming(self):
+        items = [
+            self.make_item("browsable_raw/My Channel/2026-09/04 - first.mp4"),
+            self.make_item("browsable_raw/My Channel/2026-09/04 - second.mp4"),
+        ]
+        output = io.BytesIO()
+        with patch.object(VideoExport, "export_elan", return_value="<eaf/>"):
+            report = build_elan_archive(items, output, apply_filtering=False)
+
+        self.assertEqual(len(report["exported"]), 1)
+        self.assertEqual(report["failed"][0]["reason"], "duplicate_video_number")
+        with zipfile.ZipFile(output) as archive:
+            self.assertEqual(
+                archive.namelist(),
+                ["browsable_raw/My Channel/2026-09/04.eaf", "export-report.json"],
+            )
+
+    def test_new_upload_slugs_channel_and_shows_rank_instead_of_title(self):
+        self.assertEqual(
+            numbered_batch_video_path(
+                "browsable_raw/Joacim Lamotte/2026-06/02 - Long title 🎥.mp4",
+                slug_channel=True,
+            ),
+            "browsable_raw/joacim-lamotte/2026-06/02.mp4",
+        )
+        self.assertIsNone(
+            numbered_batch_video_path("other/folder/video.mp4", slug_channel=True)
         )
 
 
@@ -900,6 +961,65 @@ class VideoBatchAPIDatabaseTests(TestCase):
         enqueue.assert_called_once_with(batch)
 
     @override_settings(BATCH_UPLOAD_ROOT=tempfile.gettempdir())
+    def test_new_batch_displays_slugged_channel_and_numbered_video(self):
+        source_path = "browsable_raw/Joacim Lamotte/2026-06/02 - A long title.mp4"
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/upload",
+                {
+                    "name": "Top 20",
+                    "paths": json.dumps([source_path]),
+                    "files": [SimpleUploadedFile("02 - A long title.mp4", b"video")],
+                },
+            )
+        )
+        with patch("backend.views.video_batch.enqueue_batch_ingest"):
+            response = VideoBatchUpload.as_view()(request)
+
+        batch = VideoBatch.objects.get(id=json.loads(response.content)["batch_id"])
+        item = batch.items.get()
+        self.assertEqual(item.original_path, source_path)
+        self.assertEqual(item.original_filename, "02 - A long title.mp4")
+        self.assertEqual(
+            item.display_path, "browsable_raw/joacim-lamotte/2026-06/02.mp4"
+        )
+        self.assertEqual(item.to_dict()["display_filename"], "02.mp4")
+
+        summary_request = self.authenticated(
+            self.factory.get(f"/video/batch/get?id={batch.id.hex}&summary=true")
+        )
+        summary = json.loads(VideoBatchGet.as_view()(summary_request).content)["entry"]
+        self.assertEqual(
+            summary["folders"][0]["path"],
+            "browsable_raw/joacim-lamotte/2026-06",
+        )
+        items_request = self.authenticated(
+            self.factory.get(
+                "/video/batch/items",
+                {
+                    "id": batch.id.hex,
+                    "folder": "browsable_raw/joacim-lamotte/2026-06",
+                },
+            )
+        )
+        items = json.loads(VideoBatchItems.as_view()(items_request).content)
+        self.assertEqual(items["total"], 1)
+        self.assertEqual(items["items"][0]["display_filename"], "02.mp4")
+
+        item.video = Video.objects.create(owner=self.user, name="Video", ext=".mp4")
+        item.ingest_status = VideoBatchItem.STATUS_READY
+        item.save(update_fields=["video", "ingest_status"])
+        scoped = ready_item_ids_for_scope(
+            batch,
+            {
+                "type": "folder",
+                "folder_path": "browsable_raw/joacim-lamotte/2026-06",
+                "include_subfolders": False,
+            },
+        )
+        self.assertEqual(scoped["item_ids"], [item.id])
+
+    @override_settings(BATCH_UPLOAD_ROOT=tempfile.gettempdir())
     def test_zip_batch_upload_persists_archive_and_enqueues(self):
         request = self.authenticated(
             self.factory.post(
@@ -1013,10 +1133,10 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(detail_response.status_code, 500)
         self.assertEqual(json.loads(detail_response.content)["type"], "not_exist")
 
-    def test_batch_elan_export_preserves_folders_and_resolves_name_collisions(self):
+    def test_batch_elan_export_uses_rank_and_legacy_media_links(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Research batch")
-        self.create_ready_batch_item(batch, "group/session/clip.mp4")
-        self.create_ready_batch_item(batch, "group/session/clip.mov")
+        self.create_ready_batch_item(batch, "browsable_raw/My Channel/2026-09/01 - clip.mp4")
+        self.create_ready_batch_item(batch, "browsable_raw/My Channel/2026-09/02 - clip.mov")
 
         request = self.authenticated(
             self.factory.post(
@@ -1036,17 +1156,17 @@ class VideoBatchAPIDatabaseTests(TestCase):
             self.assertEqual(
                 archive.namelist(),
                 [
-                    "group/session/clip.eaf",
-                    "group/session/clip (2).eaf",
+                    "browsable_raw/My Channel/2026-09/01.eaf",
+                    "browsable_raw/My Channel/2026-09/02.eaf",
                 ],
             )
             elan_files = [
-                archive.read("group/session/clip.eaf").decode("utf-8"),
-                archive.read("group/session/clip (2).eaf").decode("utf-8"),
+                archive.read("browsable_raw/My Channel/2026-09/01.eaf").decode("utf-8"),
+                archive.read("browsable_raw/My Channel/2026-09/02.eaf").decode("utf-8"),
             ]
             self.assertTrue(all("ANNOTATION_DOCUMENT" in elan for elan in elan_files))
-            self.assertTrue(any("clip.mp4" in elan for elan in elan_files))
-            self.assertTrue(any("clip.mov" in elan for elan in elan_files))
+            self.assertIn("01 - clip.mp4", elan_files[0])
+            self.assertIn("02 - clip.mov", elan_files[1])
             self.assertTrue(
                 all(
                     "<ANNOTATION_VALUE>0</ANNOTATION_VALUE>" in elan
@@ -1103,7 +1223,7 @@ class VideoBatchAPIDatabaseTests(TestCase):
 
     def test_batch_elan_export_can_skip_eaf_filter(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Raw batch")
-        self.create_ready_batch_item(batch, "video.mp4")
+        self.create_ready_batch_item(batch, "group/2026-09/04.mp4")
         request = self.authenticated(
             self.factory.post(
                 "/video/batch/export-elan",
@@ -1119,13 +1239,38 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("raw-batch-raw-elan.zip", response["Content-Disposition"])
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            elan = archive.read("video.eaf").decode("utf-8")
+            elan = archive.read("group/2026-09/04.eaf").decode("utf-8")
         self.assertIn(">value:0<", elan)
+        self.assertIn("04.mp4", elan)
+
+    def test_batch_elan_export_reports_duplicate_video_numbers(self):
+        batch = VideoBatch.objects.create(owner=self.user, name="Duplicate numbers")
+        self.create_ready_batch_item(batch, "group/2026-09/04 - first.mp4")
+        self.create_ready_batch_item(batch, "group/2026-09/04 - second.mp4")
+        request = self.authenticated(
+            self.factory.post(
+                "/video/batch/export-elan",
+                data=json.dumps({"id": batch.id.hex}),
+                content_type="application/json",
+            )
+        )
+
+        response = VideoBatchExportElan.as_view()(request)
+
+        self.assertEqual(response["X-Exported-Count"], "1")
+        self.assertEqual(response["X-Failed-Count"], "1")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            self.assertEqual(
+                archive.namelist(),
+                ["group/2026-09/04.eaf", "export-report.json"],
+            )
+            report = json.loads(archive.read("export-report.json"))
+        self.assertEqual(report["failed"][0]["reason"], "duplicate_video_number")
 
     @patch("backend.views.video_batch.export_batch_elan.apply_async")
     def test_batch_elan_export_can_start_async_job(self, apply_async):
         batch = VideoBatch.objects.create(owner=self.user, name="Async batch")
-        self.create_ready_batch_item(batch, "video.mp4")
+        self.create_ready_batch_item(batch, "group/2026-09/04.mp4")
 
         request = self.authenticated(
             self.factory.post(
@@ -1163,11 +1308,14 @@ class VideoBatchAPIDatabaseTests(TestCase):
         )
         download_response = VideoBatchExportElanDownload.as_view()(download_request)
         self.assertEqual(download_response.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(b"".join(download_response.streaming_content))) as archive:
+            self.assertEqual(archive.namelist(), ["group/2026-09/04.eaf"])
+            self.assertIn("04.mp4", archive.read("group/2026-09/04.eaf").decode())
 
     def test_batch_elan_export_repairs_corrupted_unicode_names(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Unicode batch")
         item = self.create_ready_batch_item(
-            batch, "folder/a\u2560\u00e8ret - fo\u2560\u00ear.mp4"
+            batch, "folder/2026-09/04 - a\u2560\u00e8ret - fo\u2560\u00ear.mp4"
         )
 
         request = self.authenticated(
@@ -1182,19 +1330,19 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["X-Exported-Count"], "1")
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            expected_path = "folder/\u00e5ret - f\u00f6r.eaf"
+            expected_path = "folder/2026-09/04.eaf"
             self.assertEqual(archive.namelist(), [expected_path])
             elan = archive.read(expected_path).decode("utf-8")
 
-        self.assertIn("\u00e5ret - f\u00f6r.mp4", elan)
+        self.assertIn("04 - \u00e5ret - f\u00f6r.mp4", elan)
         self.assertNotIn("╠", elan)
-        self.assertEqual(item.original_path, "folder/a\u2560\u00e8ret - fo\u2560\u00ear.mp4")
+        self.assertEqual(item.original_path, "folder/2026-09/04 - a\u2560\u00e8ret - fo\u2560\u00ear.mp4")
 
     def test_batch_elan_export_includes_report_for_partial_failures(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Partial")
-        successful = self.create_ready_batch_item(batch, "ok/video.mp4")
+        successful = self.create_ready_batch_item(batch, "ok/2026-09/01 - video.mp4")
         failed = self.create_ready_batch_item(
-            batch, "missing/video.mp4", with_shots=False
+            batch, "missing/2026-09/02 - video.mp4", with_shots=False
         )
 
         request = self.authenticated(
@@ -1210,7 +1358,7 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(response["X-Exported-Count"], "1")
         self.assertEqual(response["X-Failed-Count"], "1")
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            self.assertIn("ok/video.eaf", archive.namelist())
+            self.assertIn("ok/2026-09/01.eaf", archive.namelist())
             report = json.loads(archive.read("export-report.json"))
         self.assertEqual(report["exported"][0]["item_id"], successful.id.hex)
         self.assertEqual(
@@ -1218,7 +1366,7 @@ class VideoBatchAPIDatabaseTests(TestCase):
             [
                 {
                     "item_id": failed.id.hex,
-                    "original_path": "missing/video.mp4",
+                    "original_path": "missing/2026-09/02 - video.mp4",
                     "reason": "missing_shot_timeline",
                 }
             ],
@@ -1977,6 +2125,28 @@ class VideoBatchTaskDatabaseTests(TestCase):
             width=1920,
             height=1080,
         )
+
+    def test_zip_batch_items_get_display_paths_without_losing_source_names(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_path = Path(tmp_dir) / "batch.zip"
+            source = "browsable_raw/Joacim Lamotte/2026-06/02 - A long title.mp4"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr(source, b"video")
+            batch = VideoBatch.objects.create(
+                owner=self.user,
+                name="Top 20",
+                source_type=VideoBatch.SOURCE_ZIP,
+                source_path=str(zip_path),
+            )
+            with override_settings(BATCH_UPLOAD_ROOT=tmp_dir):
+                create_zip_batch_items(batch)
+
+            item = batch.items.get()
+            self.assertEqual(item.original_path, source)
+            self.assertEqual(item.original_filename, "02 - A long title.mp4")
+            self.assertEqual(
+                item.display_path, "browsable_raw/joacim-lamotte/2026-06/02.mp4"
+            )
 
     def test_ingest_video_batch_processes_pending_items(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -3,16 +3,14 @@ import io
 import logging
 import shutil
 import uuid
-import zipfile
 from pathlib import Path
 
 from django.core.cache import cache
-from django.db.models import Count, Q
+from django.db.models import Case, CharField, Count, F, Q, When
 from django.http import FileResponse, HttpResponse, JsonResponse
 from django.utils.text import slugify
 from django.views import View
 
-from backend.eaf_filter import EafFilterError, filter_eaf_xml
 from backend.models import (
     SavedBatchPreset,
     VideoBatch,
@@ -32,11 +30,15 @@ from backend.utils.batch_upload import (
     get_max_batch_total_size,
     save_batch_source_file,
     sha256_path,
-    normalize_zip_member_name,
     repair_filename_unicode,
 )
 from backend.utils.batch_plugin_catalog import list_batch_plugin_catalog, timeline_by_name
-from backend.utils.elan_export import ELAN_EXPORT_CACHE_TIMEOUT, elan_export_cache_key
+from backend.utils.batch_naming import numbered_batch_video_path
+from backend.utils.elan_export import (
+    ELAN_EXPORT_CACHE_TIMEOUT,
+    build_elan_archive,
+    elan_export_cache_key,
+)
 from backend.utils.video_ingest import is_allowed_video_extension
 from backend.utils.plugin_presets import (
     DEFAULT_BATCH_PRESET,
@@ -45,7 +47,6 @@ from backend.utils.plugin_presets import (
     validate_batch_preset,
     validate_batch_preset_definition,
 )
-from backend.views.video_export import ElanExportError, VideoExport
 
 
 logger = logging.getLogger(__name__)
@@ -54,8 +55,18 @@ ITEM_STATUS_CODES = {label: code for code, label in VideoBatchItem.STATUS.items(
 PLUGIN_STATUS_CODES = {label: code for code, label in VideoBatchPluginRun.STATUS.items()}
 
 
+def with_display_path(items):
+    return items.annotate(
+        effective_path=Case(
+            When(display_path="", then=F("original_path")),
+            default=F("display_path"),
+            output_field=CharField(),
+        )
+    )
+
+
 def filtered_batch_items(batch, filters):
-    items = batch.items.all()
+    items = with_display_path(batch.items.all())
     status = filters.get("status") or "All"
     if status != "All":
         status_filter = Q()
@@ -69,15 +80,16 @@ def filtered_batch_items(batch, filters):
     if folder is not None:
         folder = str(folder).strip("/")
         items = (
-            items.filter(original_path__startswith=f"{folder}/")
+            items.filter(effective_path__startswith=f"{folder}/")
             if folder
-            else items.exclude(original_path__contains="/")
+            else items.exclude(effective_path__contains="/")
         )
 
     search = (filters.get("search") or "").strip()
     if search:
         items = items.filter(
-            Q(original_path__icontains=search)
+            Q(effective_path__icontains=search)
+            | Q(original_path__icontains=search)
             | Q(original_filename__icontains=search)
         )
     return items
@@ -86,11 +98,11 @@ def filtered_batch_items(batch, filters):
 def batch_detail_summary(batch):
     item_counts = {status: 0 for status in ITEM_STATUS_CODES}
     folders = {}
-    for original_path, status, video_id in batch.items.values_list(
-        "original_path", "ingest_status", "video_id"
-    ):
+    for displayed_path, status, video_id in with_display_path(
+        batch.items.all()
+    ).values_list("effective_path", "ingest_status", "video_id"):
         item_counts[VideoBatchItem.STATUS[status]] += 1
-        folder_path = original_path.rpartition("/")[0]
+        folder_path = displayed_path.rpartition("/")[0]
         folder = folders.setdefault(
             folder_path, {"path": folder_path, "count": 0, "ready_count": 0}
         )
@@ -115,29 +127,6 @@ def batch_detail_summary(batch):
         "folders": list(folders.values()),
         "plugin_columns": plugin_columns,
     }
-
-
-def elan_archive_path(item, used_paths):
-    normalized_path = normalize_zip_member_name(
-        item.original_path or item.original_filename
-    )
-    if normalized_path is None:
-        normalized_path = f"{item.video_id.hex}.eaf"
-    else:
-        normalized_path = str(Path(normalized_path).with_suffix(".eaf")).replace(
-            "\\", "/"
-        )
-
-    candidate = normalized_path
-    index = 2
-    while candidate.casefold() in used_paths:
-        path = Path(normalized_path)
-        candidate = str(path.with_name(f"{path.stem} ({index}){path.suffix}")).replace(
-            "\\", "/"
-        )
-        index += 1
-    used_paths.add(candidate.casefold())
-    return candidate
 
 
 def elan_export_filename(batch, apply_filtering):
@@ -254,10 +243,12 @@ def ready_item_ids_for_scope(batch, scope):
         scope = {"type": "all"}
 
     scope_type = scope.get("type") or "all"
-    items = VideoBatchItem.objects.filter(
-        batch=batch,
-        ingest_status=VideoBatchItem.STATUS_READY,
-        video__isnull=False,
+    items = with_display_path(
+        VideoBatchItem.objects.filter(
+            batch=batch,
+            ingest_status=VideoBatchItem.STATUS_READY,
+            video__isnull=False,
+        )
     )
 
     if scope_type == "item_ids":
@@ -283,19 +274,19 @@ def ready_item_ids_for_scope(batch, scope):
         if folder_path:
             prefix = f"{folder_path}/"
             if include_subfolders:
-                items = items.filter(original_path__startswith=prefix)
+                items = items.filter(effective_path__startswith=prefix)
             else:
                 depth = folder_path.count("/") + 1
                 items = [
                     item
                     for item in items
-                    if item.original_path.startswith(prefix)
-                    and item.original_path.count("/") == depth
+                    if item.effective_path.startswith(prefix)
+                    and item.effective_path.count("/") == depth
                 ]
                 item_ids = [item.id for item in items]
                 return {"status": "ok", "item_ids": item_ids}
         else:
-            items = [item for item in items if "/" not in item.original_path]
+            items = [item for item in items if "/" not in item.effective_path]
             item_ids = [item.id for item in items]
             return {"status": "ok", "item_ids": item_ids}
 
@@ -514,6 +505,9 @@ class VideoBatchUpload(View):
                         batch=batch,
                         original_filename=repair_filename_unicode(uploaded_file.name),
                         original_path=original_path,
+                        display_path=numbered_batch_video_path(
+                            original_path, slug_channel=True
+                        ) or "",
                         source_path=str(source["path"]),
                         file_size=source["file_size"],
                         checksum=source["checksum"],
@@ -645,12 +639,14 @@ class VideoBatchItems(View):
         ).count()
         page = min(page, max(1, (total + page_size - 1) // page_size))
         sort_fields = {
-            "original_path": "original_path",
+            "original_path": "effective_path",
+            "display_path": "effective_path",
             "original_filename": "original_filename",
+            "display_filename": "original_filename",
             "ingest_status": "ingest_status",
             "date": "date",
         }
-        sort_field = sort_fields.get(request.GET.get("sort_by"), "original_path")
+        sort_field = sort_fields.get(request.GET.get("sort_by"), "effective_path")
         if request.GET.get("sort_desc") == "true":
             sort_field = f"-{sort_field}"
         start = (page - 1) * page_size
@@ -689,15 +685,18 @@ class VideoBatchItemIds(View):
         if exact_folder and folder is None:
             return JsonResponse({"status": "error", "type": "missing_folder"}, status=400)
         entries = []
-        for item_id, original_path, status, video_id in filtered_batch_items(
+        for item_id, original_path, displayed_path, status, video_id in filtered_batch_items(
             batch, request.GET
-        ).values_list("id", "original_path", "ingest_status", "video_id"):
-            if exact_folder and original_path.rpartition("/")[0] != folder.strip("/"):
+        ).values_list(
+            "id", "original_path", "effective_path", "ingest_status", "video_id"
+        ):
+            if exact_folder and displayed_path.rpartition("/")[0] != folder.strip("/"):
                 continue
             entries.append(
                 {
                     "id": item_id.hex,
                     "original_path": original_path,
+                    "display_path": displayed_path,
                     "ingest_status": VideoBatchItem.STATUS[status],
                     "video_id": video_id.hex if video_id else None,
                 }
@@ -783,76 +782,11 @@ class VideoBatchExportElan(View):
             )
 
         buffer = io.BytesIO()
-        report = {"exported": [], "failed": []}
-        used_paths = set()
-        exporter = VideoExport()
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for item in items.order_by("original_path", "original_filename"):
-                archive_path = elan_archive_path(item, used_paths)
-                try:
-                    normalized_source_path = normalize_zip_member_name(
-                        item.original_path or item.original_filename
-                    )
-                    linked_file_path = (
-                        Path(normalized_source_path).name
-                        if normalized_source_path
-                        else repair_filename_unicode(item.original_filename)
-                    )
-                    elan = exporter.export_elan(
-                        {"aggregation": 0},
-                        item.video,
-                        linked_file_path=linked_file_path,
-                    )
-                    if apply_filtering:
-                        elan, filter_result = filter_eaf_xml(elan)
-                        logger.info(
-                            "Filtered batch ELAN export item_id=%s groups=%d "
-                            "cluster_groups=%d warnings=%d",
-                            item.id.hex,
-                            len(filter_result.groups),
-                            len(filter_result.cluster_groups),
-                            len(filter_result.warnings),
-                        )
-                    archive.writestr(archive_path, elan)
-                    report["exported"].append(
-                        {"item_id": item.id.hex, "path": archive_path}
-                    )
-                except ElanExportError as exc:
-                    report["failed"].append(
-                        {
-                            "item_id": item.id.hex,
-                            "original_path": repair_filename_unicode(item.original_path),
-                            "reason": exc.code,
-                        }
-                    )
-                except EafFilterError:
-                    logger.exception(
-                        "Failed to filter ELAN for batch item %s", item.id.hex
-                    )
-                    report["failed"].append(
-                        {
-                            "item_id": item.id.hex,
-                            "original_path": repair_filename_unicode(item.original_path),
-                            "reason": "eaf_filter_failed",
-                        }
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to export ELAN for batch item %s", item.id.hex
-                    )
-                    report["failed"].append(
-                        {
-                            "item_id": item.id.hex,
-                            "original_path": repair_filename_unicode(item.original_path),
-                            "reason": "elan_export_failed",
-                        }
-                    )
-
-            if report["failed"]:
-                archive.writestr(
-                    "export-report.json",
-                    json.dumps(report, indent=2),
-                )
+        report = build_elan_archive(
+            items.order_by("original_path", "original_filename"),
+            buffer,
+            apply_filtering=apply_filtering,
+        )
 
         filename = elan_export_filename(batch, apply_filtering)
         response = HttpResponse(buffer.getvalue(), content_type="application/zip")

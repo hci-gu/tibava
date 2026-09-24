@@ -26,6 +26,7 @@ from backend.utils.batch_upload import (
     get_batch_dir,
     get_max_active_plugin_runs_per_batch,
 )
+from backend.utils.batch_naming import numbered_batch_video_path
 from backend.utils.plugin_presets import (
     DEFAULT_BATCH_PRESET,
     build_step_parameters,
@@ -247,6 +248,9 @@ def create_zip_batch_items(batch):
             batch=batch,
             original_filename=entry["original_filename"],
             original_path=entry["original_path"],
+            display_path=numbered_batch_video_path(
+                entry["original_path"], slug_channel=True
+            ) or "",
             source_path=str(entry.get("source_path", "")),
             file_size=entry.get("file_size", 0),
             checksum=entry.get("checksum", ""),

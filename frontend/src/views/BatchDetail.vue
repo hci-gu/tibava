@@ -240,8 +240,8 @@
             <v-icon small>mdi-open-in-new</v-icon>
           </v-btn>
         </template>
-        <template v-slot:item.original_path="{ item }">
-          <span class="path-cell">{{ item.original_path }}</span>
+        <template v-slot:item.display_path="{ item }">
+          <span class="path-cell">{{ item.display_path }}</span>
         </template>
         <template v-slot:item.ingest_status="{ item }">
           <v-chip small :color="statusColor(item.ingest_status)" dark>
@@ -560,8 +560,8 @@ export default {
     tableHeaders() {
       return [
         { text: "Open", value: "video_link", sortable: false, width: 56 },
-        { text: "Path", value: "original_path" },
-        { text: "File", value: "original_filename" },
+        { text: "Path", value: "display_path" },
+        { text: "File", value: "display_filename" },
         { text: "Ingest", value: "ingest_status", width: 110 },
         { text: "Uploaded", value: "date" },
         { text: "Duration", value: "video.duration", sortable: false, width: 110 },
@@ -689,7 +689,7 @@ export default {
       }
     },
     folderPathForItem(item) {
-      const pathParts = (item.original_path || "").split("/");
+      const pathParts = (item.display_path || item.original_path || "").split("/");
       return pathParts.length > 1 ? pathParts.slice(0, -1).join("/") : "";
     },
     folderItems(group) {
