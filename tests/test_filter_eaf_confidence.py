@@ -319,6 +319,44 @@ class FilteringTests(unittest.TestCase):
         self.assertTrue(any("Energy" in warning for warning in result.warnings))
         self.assertEqual(result.removed_time_slots, 14)
 
+    def test_confidence_tiers_may_have_extra_intervals(self) -> None:
+        tree = (
+            EafFixture()
+            .add_tier(
+                "Shot Scale",
+                [(83, 200, "Shot Scale:Medium"), (200, 300, "Shot Scale:Full")],
+            )
+            .add_tier(
+                "Medium",
+                [
+                    (0, 41, "value:0.9"),
+                    (83, 200, "value:0.4"),
+                    (200, 300, "value:0.2"),
+                ],
+            )
+            .add_tier(
+                "Full",
+                [
+                    (0, 41, "value:0.1"),
+                    (83, 200, "value:0.6"),
+                    (200, 300, "value:0.8"),
+                ],
+            )
+            .tree()
+        )
+
+        result = filterer.filter_tree(tree, 0.5)
+
+        self.assertEqual([group.main_tier for group in result.groups], ["Shot Scale"])
+        self.assertEqual(tier_values(tree, "Shot Scale"), ["Full"])
+        remaining_tiers = {
+            tier.get("TIER_ID") for tier in tree.getroot().findall("TIER")
+        }
+        self.assertNotIn("Medium", remaining_tiers)
+        self.assertNotIn("Full", remaining_tiers)
+        self.assertEqual(result.groups[0].kept, 1)
+        self.assertEqual(result.groups[0].filtered, 1)
+
     def test_threshold_is_inclusive_and_largest_score_is_ignored(self) -> None:
         tree = (
             EafFixture()

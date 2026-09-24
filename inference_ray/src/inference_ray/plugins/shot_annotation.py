@@ -44,7 +44,7 @@ class ShotAnnotator(
             with class_probs as class_probs:
                 idx = []
                 for i, t in enumerate(class_probs.time):
-                    if t > start and t < end:
+                    if start <= t < end:
                         idx.append(i)
 
                 if len(idx) > 0:

@@ -342,9 +342,13 @@ def discover_groups(
         while cursor < len(tiers):
             candidate = tiers[cursor]
             candidate_intervals = {record.interval for record in candidate.records}
+            intervals_are_compatible = (
+                candidate_intervals.issubset(main_intervals)
+                or main_intervals.issubset(candidate_intervals)
+            )
             if (
                 not candidate_intervals
-                or not candidate_intervals.issubset(main_intervals)
+                or not intervals_are_compatible
                 or not _is_confidence_tier(candidate, selected_labels)
             ):
                 break

@@ -834,7 +834,7 @@ class VideoExport(View):
                     for i, shot in enumerate(shots):
                         annotations = []
                         shot_y_data = y[
-                            np.logical_and(time >= shot.start, time <= shot.end)
+                            np.logical_and(time >= shot.start, time < shot.end)
                         ]
                         # print(f"{shot.start} - {shot.end}")
 
