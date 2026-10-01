@@ -81,6 +81,53 @@ class ConfidenceParsingTests(unittest.TestCase):
 
 
 class FilteringTests(unittest.TestCase):
+    def test_face_emotion_values_are_collapsed_after_confidence_filtering(self) -> None:
+        tree = (
+            EafFixture()
+            .add_tier(
+                "Face Emotion",
+                [
+                    (0, 100, "Emotion:Neutral"),
+                    (100, 200, "Emotion:Happy"),
+                    (200, 300, "Emotion:Surprise"),
+                    (300, 400, "Emotion:Sad"),
+                ],
+            )
+            .add_tier("Neutral", [(0, 100, "value:0.8")])
+            .add_tier("Happy", [(100, 200, "value:0.7")])
+            .add_tier("Surprise", [(200, 300, "value:0.5")])
+            .add_tier("Sad", [(300, 400, "value:0.4")])
+            .add_tier("Other Emotion", [(0, 100, "Emotion:Happy")])
+            .tree()
+        )
+
+        filterer.filter_tree(tree, 0.5)
+
+        self.assertEqual(
+            tier_values(tree, "Face Emotion"),
+            ["Neutral", "Face Gesture", "Face Gesture"],
+        )
+        self.assertEqual(tier_values(tree, "Other Emotion"), ["Happy"])
+
+    def test_custom_face_emotion_tier_is_identified_by_plugin_scores(self) -> None:
+        fixture = EafFixture().add_tier(
+            "Facial expressions",
+            [(0, 100, "Emotion:Angry"), (100, 200, "Emotion:Neutral")],
+        )
+        for label in (
+            "Angry", "Disgust", "Fear", "Happy", "Sad", "Surprise", "Neutral"
+        ):
+            fixture.add_tier(
+                label, [(0, 100, "value:0.8"), (100, 200, "value:0.8")]
+            )
+        tree = fixture.tree()
+
+        filterer.filter_tree(tree, 0.5)
+
+        self.assertEqual(
+            tier_values(tree, "Facial expressions"), ["Face Gesture", "Neutral"]
+        )
+
     def test_cluster_scores_are_thresholded_then_merged_into_empty_parent(self) -> None:
         tree = (
             EafFixture()

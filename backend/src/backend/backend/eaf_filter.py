@@ -37,6 +37,15 @@ PLAIN_NUMERIC_VALUE_TIER_IDS = (
 )
 MERGED_TRANSCRIPT_TIER_IDS = ("Transcript", "Whisper Transcript")
 CONSOLIDATED_OCR_TIER_ID = "OCR"
+FACE_EMOTION_SCORE_TIER_IDS = {
+    "Angry",
+    "Disgust",
+    "Fear",
+    "Happy",
+    "Sad",
+    "Surprise",
+    "Neutral",
+}
 _CLUSTER_TIER_RE = re.compile(r"^(?:Cluster|PCluster|FCluster)\s+\d+$")
 
 _XSI_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance"
@@ -613,6 +622,16 @@ def _strip_configured_value_prefixes(root: ET.Element) -> int:
     return stripped_count
 
 
+def _map_face_emotion_values(root: ET.Element, tier_ids: set[str]) -> None:
+    for tier in _children(root, "TIER"):
+        if tier.get("TIER_ID") not in tier_ids:
+            continue
+        for value_element in _descendants(tier, "ANNOTATION_VALUE"):
+            value = (value_element.text or "").strip()
+            if value:
+                value_element.text = "Neutral" if value == "Neutral" else "Face Gesture"
+
+
 def _strip_value_prefix_from_numeric_display_tiers(root: ET.Element) -> int:
     stripped_count = 0
     for tier in _children(root, "TIER"):
@@ -830,6 +849,12 @@ def filter_tree(tree: ET.ElementTree, threshold: float) -> FilterResult:
 
     root, time_order, time_values, initially_referenced = _validate_and_index(tree)
     groups, score_tier_ids = discover_groups(root, time_values)
+    face_emotion_tier_ids = {"Face Emotion"}
+    face_emotion_tier_ids.update(
+        main.tier_id
+        for main, score_tiers in groups
+        if {tier.tier_id for tier in score_tiers} == FACE_EMOTION_SCORE_TIER_IDS
+    )
     cluster_groups = discover_cluster_groups(root, time_values)
     result = FilterResult(output_path=None)
     score_tier_owners = {
@@ -885,6 +910,7 @@ def filter_tree(tree: ET.ElementTree, threshold: float) -> FilterResult:
         root, time_values, result.warnings
     )
     result.stripped_value_prefixes = _strip_configured_value_prefixes(root)
+    _map_face_emotion_values(root, face_emotion_tier_ids)
     (
         result.original_ocr_annotations,
         result.consolidated_ocr_windows,

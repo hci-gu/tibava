@@ -80,7 +80,9 @@ class VideoList(View):
     def get(self, request):
         try:
             if not request.user.is_authenticated:
-                return JsonResponse({"status": "error"}, status=500)
+                return JsonResponse(
+                    {"status": "error", "type": "not_authenticated"}, status=403
+                )
             entries = []
             videos = Video.objects.filter(owner=request.user).annotate(
                 timeline_count=Count("timeline", distinct=True)

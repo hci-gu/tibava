@@ -569,7 +569,7 @@ class VideoBatchList(View):
         try:
             if not request.user.is_authenticated:
                 return JsonResponse(
-                    {"status": "error", "type": "not_authenticated"}, status=500
+                    {"status": "error", "type": "not_authenticated"}, status=403
                 )
 
             entries = [
@@ -959,7 +959,7 @@ class VideoBatchPresetList(View):
         try:
             if not request.user.is_authenticated:
                 return JsonResponse(
-                    {"status": "error", "type": "not_authenticated"}, status=500
+                    {"status": "error", "type": "not_authenticated"}, status=403
                 )
 
             built_in = [
@@ -1098,7 +1098,7 @@ class VideoBatchPluginCatalog(View):
         try:
             if not request.user.is_authenticated:
                 return JsonResponse(
-                    {"status": "error", "type": "not_authenticated"}, status=500
+                    {"status": "error", "type": "not_authenticated"}, status=403
                 )
 
             return JsonResponse(

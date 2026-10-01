@@ -8,6 +8,7 @@ import zipfile
 from unittest.mock import Mock, patch
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 
@@ -56,7 +57,7 @@ from backend.utils.plugin_presets import (
     validate_batch_preset_definition,
 )
 from backend.utils.video_ingest import ingest_video_file
-from backend.views.video import VideoUpload
+from backend.views.video import VideoList, VideoUpload
 from backend.views.video_export import VideoExport, resolve_elan_tier_id
 from backend.views.video_batch import (
     VideoBatchCancel,
@@ -81,6 +82,22 @@ from backend.views.video_batch import (
     VideoBatchUpload,
     ready_item_ids_for_scope,
 )
+
+
+class AnonymousListViewTests(SimpleTestCase):
+    def test_list_endpoints_report_authentication_failure(self):
+        for path, view in (
+            ("/video/list", VideoList),
+            ("/video/batch/list", VideoBatchList),
+            ("/video/batch/presets", VideoBatchPresetList),
+            ("/video/batch/plugin-catalog", VideoBatchPluginCatalog),
+        ):
+            with self.subTest(path=path):
+                request = RequestFactory().get(path)
+                request.user = AnonymousUser()
+                response = view.as_view()(request)
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(json.loads(response.content)["type"], "not_authenticated")
 
 
 class ParserDefaultTests(SimpleTestCase):

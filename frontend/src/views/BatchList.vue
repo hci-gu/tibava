@@ -78,7 +78,12 @@ export default {
     };
   },
   mounted() {
-    this.videoBatchStore.fetchAll();
+    if (this.userStore.loggedIn) this.videoBatchStore.fetchAll();
+  },
+  watch: {
+    "userStore.loggedIn"(loggedIn) {
+      if (loggedIn) this.videoBatchStore.fetchAll();
+    },
   },
   computed: {
     batches() {
