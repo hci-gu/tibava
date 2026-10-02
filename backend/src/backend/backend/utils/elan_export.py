@@ -3,8 +3,10 @@ import logging
 import zipfile
 from pathlib import Path, PurePosixPath
 
+from django.utils.text import slugify
+
 from backend.eaf_filter import EafFilterError, filter_eaf_xml
-from backend.utils.batch_naming import numbered_batch_video_path
+from backend.utils.batch_naming import MONTH, RANKED_TITLE, numbered_batch_video_path
 from backend.utils.batch_upload import normalize_zip_member_name, repair_filename_unicode
 
 
@@ -120,7 +122,7 @@ def build_elan_archive(
 
 
 def batch_export_paths(item):
-    """Return the title-free EAF path and the matching media link.
+    """Return the dated EAF path and the matching media link.
 
     Existing batches retain their channel folders and original video names.
     New batches use their canonical display path for both names.
@@ -138,5 +140,13 @@ def batch_export_paths(item):
     else:
         linked_file_path = repair_filename_unicode(item.original_filename)
     if canonical_path:
-        return str(PurePosixPath(canonical_path).with_suffix(".eaf")), linked_file_path
+        video_path = PurePosixPath(canonical_path)
+        parts = video_path.parts
+        if len(parts) >= 3 and MONTH.fullmatch(parts[-2]):
+            rank = RANKED_TITLE.fullmatch(video_path.stem)
+            channel = slugify(parts[-3])
+            if rank and channel:
+                filename = f"{channel}-{parts[-2]}-{int(rank.group(1)):02d}.eaf"
+                return str(video_path.with_name(filename)), linked_file_path
+        return str(video_path.with_suffix(".eaf")), linked_file_path
     return f"{item.video_id.hex}.eaf", linked_file_path

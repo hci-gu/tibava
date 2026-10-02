@@ -159,7 +159,7 @@ class BatchElanArchivePathTests(SimpleTestCase):
         item = self.make_item("browsable_raw/My Channel/2026-09/04 - A very long title 🎥.mp4")
         self.assertEqual(
             batch_export_paths(item),
-            ("browsable_raw/My Channel/2026-09/04.eaf", "04 - A very long title 🎥.mp4"),
+            ("browsable_raw/My Channel/2026-09/my-channel-2026-09-04.eaf", "04 - A very long title 🎥.mp4"),
         )
 
     def test_new_numbered_video_matches_eaf_path(self):
@@ -169,7 +169,14 @@ class BatchElanArchivePathTests(SimpleTestCase):
         )
         self.assertEqual(
             batch_export_paths(item),
-            ("browsable_raw/my-channel/2026-09/04.eaf", "04.mp4"),
+            ("browsable_raw/my-channel/2026-09/my-channel-2026-09-04.eaf", "04.mp4"),
+        )
+
+    def test_export_name_uses_channel_month_and_existing_number(self):
+        item = self.make_item("browsable_raw/Aftonbladet/2026-02/01 - News.mp4")
+        self.assertEqual(
+            batch_export_paths(item),
+            ("browsable_raw/Aftonbladet/2026-02/aftonbladet-2026-02-01.eaf", "01 - News.mp4"),
         )
 
     def test_duplicate_numbers_are_reported_without_renaming(self):
@@ -186,7 +193,7 @@ class BatchElanArchivePathTests(SimpleTestCase):
         with zipfile.ZipFile(output) as archive:
             self.assertEqual(
                 archive.namelist(),
-                ["browsable_raw/My Channel/2026-09/04.eaf", "export-report.json"],
+                ["browsable_raw/My Channel/2026-09/my-channel-2026-09-04.eaf", "export-report.json"],
             )
 
     def test_new_upload_slugs_channel_and_shows_rank_instead_of_title(self):
@@ -1173,13 +1180,13 @@ class VideoBatchAPIDatabaseTests(TestCase):
             self.assertEqual(
                 archive.namelist(),
                 [
-                    "browsable_raw/My Channel/2026-09/01.eaf",
-                    "browsable_raw/My Channel/2026-09/02.eaf",
+                    "browsable_raw/My Channel/2026-09/my-channel-2026-09-01.eaf",
+                    "browsable_raw/My Channel/2026-09/my-channel-2026-09-02.eaf",
                 ],
             )
             elan_files = [
-                archive.read("browsable_raw/My Channel/2026-09/01.eaf").decode("utf-8"),
-                archive.read("browsable_raw/My Channel/2026-09/02.eaf").decode("utf-8"),
+                archive.read("browsable_raw/My Channel/2026-09/my-channel-2026-09-01.eaf").decode("utf-8"),
+                archive.read("browsable_raw/My Channel/2026-09/my-channel-2026-09-02.eaf").decode("utf-8"),
             ]
             self.assertTrue(all("ANNOTATION_DOCUMENT" in elan for elan in elan_files))
             self.assertIn("01 - clip.mp4", elan_files[0])
@@ -1256,7 +1263,7 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("raw-batch-raw-elan.zip", response["Content-Disposition"])
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            elan = archive.read("group/2026-09/04.eaf").decode("utf-8")
+            elan = archive.read("group/2026-09/group-2026-09-04.eaf").decode("utf-8")
         self.assertIn(">value:0<", elan)
         self.assertIn("04.mp4", elan)
 
@@ -1279,7 +1286,7 @@ class VideoBatchAPIDatabaseTests(TestCase):
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
             self.assertEqual(
                 archive.namelist(),
-                ["group/2026-09/04.eaf", "export-report.json"],
+                ["group/2026-09/group-2026-09-04.eaf", "export-report.json"],
             )
             report = json.loads(archive.read("export-report.json"))
         self.assertEqual(report["failed"][0]["reason"], "duplicate_video_number")
@@ -1326,8 +1333,8 @@ class VideoBatchAPIDatabaseTests(TestCase):
         download_response = VideoBatchExportElanDownload.as_view()(download_request)
         self.assertEqual(download_response.status_code, 200)
         with zipfile.ZipFile(io.BytesIO(b"".join(download_response.streaming_content))) as archive:
-            self.assertEqual(archive.namelist(), ["group/2026-09/04.eaf"])
-            self.assertIn("04.mp4", archive.read("group/2026-09/04.eaf").decode())
+            self.assertEqual(archive.namelist(), ["group/2026-09/group-2026-09-04.eaf"])
+            self.assertIn("04.mp4", archive.read("group/2026-09/group-2026-09-04.eaf").decode())
 
     def test_batch_elan_export_repairs_corrupted_unicode_names(self):
         batch = VideoBatch.objects.create(owner=self.user, name="Unicode batch")
@@ -1347,7 +1354,7 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["X-Exported-Count"], "1")
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            expected_path = "folder/2026-09/04.eaf"
+            expected_path = "folder/2026-09/folder-2026-09-04.eaf"
             self.assertEqual(archive.namelist(), [expected_path])
             elan = archive.read(expected_path).decode("utf-8")
 
@@ -1375,7 +1382,7 @@ class VideoBatchAPIDatabaseTests(TestCase):
         self.assertEqual(response["X-Exported-Count"], "1")
         self.assertEqual(response["X-Failed-Count"], "1")
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            self.assertIn("ok/2026-09/01.eaf", archive.namelist())
+            self.assertIn("ok/2026-09/ok-2026-09-01.eaf", archive.namelist())
             report = json.loads(archive.read("export-report.json"))
         self.assertEqual(report["exported"][0]["item_id"], successful.id.hex)
         self.assertEqual(
