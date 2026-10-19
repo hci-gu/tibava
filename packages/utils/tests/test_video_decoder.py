@@ -5,7 +5,7 @@ from pathlib import Path
 import av
 import numpy as np
 
-from utils import VideoDecoder, VideoBatcher
+from tibava_utils import VideoDecoder, VideoBatcher
 
 
 class VideoDecoderTests(unittest.TestCase):

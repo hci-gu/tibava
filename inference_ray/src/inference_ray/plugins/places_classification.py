@@ -1,6 +1,6 @@
 from inference_ray.plugin import AnalyserPlugin, AnalyserPluginManager
-from utils import VideoDecoder, image_pad
-from data import (
+from tibava_utils import VideoDecoder, image_pad
+from tibava_data import (
     ListData,
     ImagesData,
     VideoData,
@@ -13,7 +13,7 @@ from data import (
 
 import csv
 import numpy as np
-from data import DataManager, Data
+from tibava_data import DataManager, Data
 
 from typing import Callable, Optional, Dict
 
@@ -222,7 +222,7 @@ class PlacesClassifier(
                         )
                     )
 
-                    self.update_callbacks(callbacks, progress=i / num_frames)
+                    # self.update_callbacks(callbacks, progress=i / num_frames)
 
         probs_data = {}
         for level in probs.keys():

@@ -38,6 +38,7 @@ applications:
               # - librosa==0.10.1
               # - setuptools>=75.8.0
               - librosa
+              - setuptools<82
               - numpy
               - scipy
               - soundfile
@@ -58,6 +59,7 @@ applications:
           runtime_env:
             uv:
               - librosa
+              - setuptools<82
               - numpy
               - scipy
               - soundfile
@@ -78,6 +80,7 @@ applications:
           runtime_env:
             uv:
               - librosa
+              - setuptools<82
               - numpy
               - scipy
               - soundfile
@@ -684,6 +687,26 @@ applications:
         ray_actor_options:
           num_cpus: 2
 
+  - name: vllm_ollama
+    route_prefix: /vllm_ollama
+    import_path: inference_ray.main:app_builder
+    args:
+      model: vllm_ollama
+      data_path: /data
+      # params:
+      #   model: Salesforce/instructblip-flan-t5-xl
+    deployments:
+      - name: Deployment
+        autoscaling_config:
+          min_replicas: 0
+          max_replicas: 20
+        ray_actor_options:
+          num_cpus: 1
+          # num_gpus: 0.1
+          runtime_env:
+            uv:
+              - ollama
+
   - name: blip_image_embedding
     route_prefix: /blip_image_embedding
     import_path: inference_ray.main:app_builder
@@ -910,6 +933,7 @@ applications:
           runtime_env:
             pip:
               - librosa==0.10.1
+              - setuptools<82
               - torch>=2.6.0
               - transformers>=4.48.3
               - speechbrain==1.0.2
@@ -930,6 +954,7 @@ applications:
           runtime_env:
             pip:
               - librosa==0.10.1
+              - setuptools<82
               - torch>=2.6.0
               - transformers>=4.48.3
               - speechbrain==1.0.2
@@ -950,6 +975,7 @@ applications:
           runtime_env:
             uv:
               - librosa==0.10.1
+              - setuptools<82
               - torch>=2.6.0
               - python_speech_features
               - scipy
@@ -972,9 +998,12 @@ applications:
           runtime_env:
             pip:
               - librosa==0.10.1
-              - torch>=2.6.0
-              - torchaudio # TODO specify version
-              - setuptools<81
+              - setuptools<82
+              - transformers<=5.0.0
+              - soundfile
+              - torch==2.6.0
+              - torchaudio==2.6.0
+              - timm==0.9.2
   - name: text_ner
     route_prefix: /text_ner
     import_path: inference_ray.main:app_builder
@@ -1038,6 +1067,46 @@ applications:
         - torchao
     args:
       model: nano_ocr_video
+      data_path: /data
+    deployments:
+      - name: Deployment
+        autoscaling_config:
+          min_replicas: 0
+  - name: movie_pattern_intensify
+    route_prefix: /movie_pattern_intensify
+    import_path: inference_ray.main:app_builder
+    args:
+      model: movie_pattern_intensify
+      data_path: /data
+    deployments:
+      - name: Deployment
+        autoscaling_config:
+          min_replicas: 0
+  - name: movie_pattern_shot_reverse_shot
+    route_prefix: /movie_pattern_shot_reverse_shot
+    import_path: inference_ray.main:app_builder
+    args:
+      model: movie_pattern_shot_reverse_shot
+      data_path: /data
+    deployments:
+      - name: Deployment
+        autoscaling_config:
+          min_replicas: 0
+  - name: movie_pattern_opposition
+    route_prefix: /movie_pattern_opposition
+    import_path: inference_ray.main:app_builder
+    args:
+      model: movie_pattern_opposition
+      data_path: /data
+    deployments:
+      - name: Deployment
+        autoscaling_config:
+          min_replicas: 0
+  - name: movie_pattern_frameshare
+    route_prefix: /movie_pattern_frameshare
+    import_path: inference_ray.main:app_builder
+    args:
+      model: movie_pattern_frameshare
       data_path: /data
     deployments:
       - name: Deployment

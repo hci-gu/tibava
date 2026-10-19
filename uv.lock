@@ -23,11 +23,11 @@ resolution-markers = [
 members = [
     "analyser",
     "backend",
-    "data",
     "inference-ray",
-    "interface",
     "tib-av-a",
-    "utils",
+    "tibava-data",
+    "tibava-interface",
+    "tibava-utils",
 ]
 
 [[package]]
@@ -129,35 +129,35 @@ name = "analyser"
 version = "0.1.0"
 source = { editable = "analyser" }
 dependencies = [
-    { name = "data" },
     { name = "grpcio" },
     { name = "imageio" },
     { name = "inference-ray" },
-    { name = "interface" },
     { name = "msgpack" },
     { name = "packaging" },
     { name = "protobuf" },
     { name = "ray", extra = ["serve"] },
     { name = "requests" },
+    { name = "tibava-data" },
+    { name = "tibava-interface" },
+    { name = "tibava-utils" },
     { name = "tqdm" },
-    { name = "utils" },
     { name = "valkey" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "data", editable = "packages/data" },
     { name = "grpcio", specifier = ">=1.70.0" },
     { name = "imageio", specifier = ">=2.37.0" },
     { name = "inference-ray", editable = "inference_ray" },
-    { name = "interface", editable = "packages/interface" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "packaging", specifier = ">=24.2" },
     { name = "protobuf", specifier = ">=5.29.3" },
     { name = "ray", extras = ["serve"], specifier = "==2.42.0" },
     { name = "requests", specifier = ">=2.32.3" },
+    { name = "tibava-data", editable = "packages/tibava_data" },
+    { name = "tibava-interface", editable = "packages/tibava_interface" },
+    { name = "tibava-utils", editable = "packages/tibava_utils" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "utils", editable = "packages/utils" },
     { name = "valkey", specifier = ">=6.1.0" },
 ]
 
@@ -301,22 +301,23 @@ source = { editable = "backend" }
 dependencies = [
     { name = "analyser" },
     { name = "celery", extra = ["redis"] },
-    { name = "data" },
     { name = "django" },
     { name = "django-cors-headers" },
     { name = "djangorestframework" },
     { name = "grpcio" },
     { name = "gunicorn" },
     { name = "imageio", extra = ["ffmpeg", "pyav"] },
-    { name = "interface" },
     { name = "msgpack" },
     { name = "pandas" },
     { name = "protobuf" },
     { name = "psycopg2-binary" },
     { name = "pymemcache" },
     { name = "pympi-ling" },
+    { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "requests" },
+    { name = "tibava-data" },
+    { name = "tibava-interface" },
     { name = "valkey" },
     { name = "wand" },
 ]
@@ -325,22 +326,23 @@ dependencies = [
 requires-dist = [
     { name = "analyser", editable = "analyser" },
     { name = "celery", extras = ["redis"], specifier = ">=5.4.0" },
-    { name = "data", editable = "packages/data" },
     { name = "django", specifier = ">=5.1.6" },
     { name = "django-cors-headers", specifier = ">=4.7.0" },
     { name = "djangorestframework", specifier = ">=3.15.2" },
     { name = "grpcio", specifier = ">=1.70.0" },
     { name = "gunicorn", specifier = ">=23.0.0" },
     { name = "imageio", extras = ["ffmpeg", "pyav"], specifier = ">=2.37.0" },
-    { name = "interface", editable = "packages/interface" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "protobuf", specifier = ">=5.29.3" },
     { name = "psycopg2-binary", specifier = ">=2.9.10" },
     { name = "pymemcache", specifier = ">=4.0.0" },
     { name = "pympi-ling", specifier = ">=1.70.2" },
+    { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "requests", specifier = ">=2.32.3" },
+    { name = "tibava-data", editable = "packages/tibava_data" },
+    { name = "tibava-interface", editable = "packages/tibava_interface" },
     { name = "valkey", specifier = ">=6.1.0" },
     { name = "wand", specifier = ">=0.6.13" },
 ]
@@ -649,21 +651,6 @@ nvrtc = [
 ]
 nvtx = [
     { name = "nvidia-nvtx", marker = "sys_platform == 'linux'" },
-]
-
-[[package]]
-name = "data"
-version = "0.1.0"
-source = { editable = "packages/data" }
-dependencies = [
-    { name = "interface" },
-    { name = "utils" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "interface", editable = "packages/interface" },
-    { name = "utils", editable = "packages/utils" },
 ]
 
 [[package]]
@@ -1109,11 +1096,9 @@ name = "inference-ray"
 version = "0.1.0"
 source = { editable = "inference_ray" }
 dependencies = [
-    { name = "data" },
     { name = "grpcio" },
     { name = "h5py" },
     { name = "imageio", extra = ["ffmpeg", "pyav"] },
-    { name = "interface" },
     { name = "librosa" },
     { name = "msgpack" },
     { name = "onnx" },
@@ -1129,21 +1114,21 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "setuptools" },
+    { name = "tibava-data" },
+    { name = "tibava-interface" },
+    { name = "tibava-utils" },
     { name = "torch" },
     { name = "tqdm" },
     { name = "transformers" },
-    { name = "utils" },
     { name = "valkey" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "data", editable = "packages/data" },
     { name = "grpcio", specifier = ">=1.70.0" },
     { name = "h5py", specifier = ">=3.12.1" },
     { name = "imageio", specifier = ">=2.37.0" },
     { name = "imageio", extras = ["ffmpeg", "pyav"], specifier = ">=2.37.0" },
-    { name = "interface", editable = "packages/interface" },
     { name = "librosa", specifier = ">=0.11.0" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "onnx", specifier = ">=1.17.0" },
@@ -1159,26 +1144,13 @@ requires-dist = [
     { name = "scikit-learn", specifier = ">=1.6.1" },
     { name = "scipy", specifier = ">=1.15.2" },
     { name = "setuptools", specifier = ">=75.8.0" },
+    { name = "tibava-data", editable = "packages/tibava_data" },
+    { name = "tibava-interface", editable = "packages/tibava_interface" },
+    { name = "tibava-utils", editable = "packages/tibava_utils" },
     { name = "torch", specifier = "==2.11.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", specifier = ">=4.48.3" },
-    { name = "utils", editable = "packages/utils" },
     { name = "valkey", specifier = ">=6.1.0" },
-]
-
-[[package]]
-name = "interface"
-version = "0.1.0"
-source = { editable = "packages/interface" }
-dependencies = [
-    { name = "grpcio" },
-    { name = "protobuf" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "grpcio", specifier = ">=1.70.0" },
-    { name = "protobuf", specifier = ">=5.29.3" },
 ]
 
 [[package]]
@@ -2840,6 +2812,41 @@ requires-dist = [
 ]
 
 [[package]]
+name = "tibava-data"
+version = "0.1.0"
+source = { editable = "packages/tibava_data" }
+dependencies = [
+    { name = "tibava-interface" },
+    { name = "tibava-utils" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "tibava-interface", editable = "packages/tibava_interface" },
+    { name = "tibava-utils", editable = "packages/tibava_utils" },
+]
+
+[[package]]
+name = "tibava-interface"
+version = "0.1.0"
+source = { editable = "packages/tibava_interface" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "grpcio", specifier = ">=1.70.0" },
+    { name = "protobuf", specifier = ">=5.29.3" },
+]
+
+[[package]]
+name = "tibava-utils"
+version = "0.1.0"
+source = { editable = "packages/tibava_utils" }
+
+[[package]]
 name = "tokenizers"
 version = "0.21.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2984,11 +2991,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/aa/63/e53da845320b757bf
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/19/4ec628951a74043532ca2cf5d97b7b14863931476d117c471e8e2b1eb39f/urllib3-2.3.0-py3-none-any.whl", hash = "sha256:1cee9ad369867bfdbbb48b7dd50374c0967a0bb7710050facf0dd6911440e3df", size = 128369, upload-time = "2024-12-22T07:47:28.074Z" },
 ]
-
-[[package]]
-name = "utils"
-version = "0.1.0"
-source = { editable = "packages/utils" }
 
 [[package]]
 name = "uvicorn"

@@ -39,7 +39,8 @@ def prepare_runtime_env(runtime_env: dict) -> None:
 
     # ONNX Runtime GPU uses the image's CUDA 12 libraries. Torch 2.11 uses
     # its CUDA 13 libraries and must not inherit the image's cuDNN 9.1 path.
-    if uses_torch and not uses_onnx_gpu:
+    uses_image_torch = any(str(spec) == "torch==2.11.0" for spec in packages)
+    if uses_torch and uses_image_torch and not uses_onnx_gpu:
         runtime_env.setdefault("env_vars", {})[
             "LD_LIBRARY_PATH"
         ] = TORCH_CUDA_LIBRARIES

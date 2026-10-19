@@ -11,28 +11,68 @@ https://docs.djangoproject.com/en/2.1/ref/settings/
 """
 
 import os
+import tomllib
+from pathlib import Path
+from dotenv import load_dotenv
+from tibava_utils import get_element
 
-# Build paths inside the project like this: os.path.join(BASE_DIR, ...)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/2.1/howto/deployment/checklist/
+def get_value(config, env_name, config_path, default_value):
+    value = get_element(config, config_path)
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "default_secret"
+    if value is None:
+        value = default_value
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+    result = os.getenv(env_name, value)
 
-# FORCE_SCRIPT_NAME = "/"
-FORCE_SCRIPT_NAME = "/"
+    if isinstance(result, str):
+        if result.lower() in ["true", "yes", "1"]:
+            result = True
+        elif result.lower() in ["false", "no", "0"]:
+            result = False
 
-ALLOWED_HOSTS = ["localhost"]
-CSRF_TRUSTED_ORIGINS = ["http://localhost", "https://localhost"]
+        if isinstance(default_value, list) or (default_value is None and env_name == "PLUGIN_WHITELIST"):
+            return [item.strip() for item in result.split(",") if item.strip()]
 
-CORS_ALLOW_ALL_ORIGINS = True
-CORS_ORIGIN_ALLOW_ALL = True
-CORS_ALLOW_CREDENTIALS = True
+    return result
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(BASE_DIR / ".env")
+
+DEFAULT_CONFIG_PATH = BASE_DIR / "backend_config.toml"
+
+CONFIG_PATH = os.getenv("DJANGO_CONFIG_PATH", DEFAULT_CONFIG_PATH)
+
+with open(CONFIG_PATH, "rb") as f:
+    config = tomllib.load(f) or {}
+
+SECRET_KEY = get_value(config, "SECRET_KEY", "secret_key", "default_secret")
+DEBUG = get_value(config, "DEBUG", "debug", False)
+
+
+FORCE_SCRIPT_NAME = get_value(config, "FORCE_SCRIPT_NAME", "force_script_name", "/")
+
+ALLOWED_HOSTS = get_value(config, "ALLOWED_HOSTS", "allowed_hosts", ["localhost"])
+CSRF_TRUSTED_ORIGINS = get_value(
+    config,
+    "CSRF_TRUSTED_ORIGINS",
+    "csrf_trusted_origins",
+    ["http://localhost", "https://localhost"],
+)
+
+CORS_ORIGIN_ALLOW_ALL = get_value(
+    config, "CORS_ORIGIN_ALLOW_ALL", "cors_origin_allow_all", True
+)
+
+CORS_ALLOW_CREDENTIALS = get_value(
+    config, "CORS_ALLOW_CREDENTIALS", "cors_allow_credentials", True
+)
+
+CORS_ALLOW_ALL_ORIGINS = CORS_ORIGIN_ALLOW_ALL
+CORS_ALLOWED_ORIGINS = get_value(config, "CORS_ALLOWED_ORIGINS", "cors_allowed_origins", [])
+
 
 LOGGING = {
     "version": 1,
@@ -71,6 +111,7 @@ INSTALLED_APPS = [
 ]
 
 AUTH_USER_MODEL = "backend.TibavaUser"
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
@@ -103,25 +144,32 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "tibava.wsgi.application"
 
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.memcached.PyMemcacheCache",
-        "LOCATION": "memcached:11211",
-        "TIMEOUT": 60 * 60 * 24,
-    }
-}
-
-# Database
-# https://docs.djangoproject.com/en/2.1/ref/settings/#databases
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": "tibava",
-        "USER": "postgres",
-        "PASSWORD": "postgres",
-        "HOST": "postgres",
-        "PORT": 5432,
+        "ENGINE": get_value(
+            config, "DB_ENGINE", "database.engine", "django.db.backends.postgresql"
+        ),
+        "NAME": get_value(config, "DB_NAME", "database.name", "tibava"),
+        "USER": get_value(config, "DB_USER", "database.user", "postgres"),
+        "PASSWORD": get_value(config, "DB_PASSWORD", "database.password", "postgres"),
+        "HOST": get_value(config, "DB_HOST", "database.host", "postgres"),
+        "PORT": int(get_value(config, "DB_PORT", "database.port", 5432)),
+    }
+}
+
+CACHES = {
+    "default": {
+        "BACKEND": get_value(
+            config,
+            "CACHE_BACKEND",
+            "cache.backend",
+            "django.core.cache.backends.memcached.PyMemcacheCache",
+        ),
+        "LOCATION": get_value(
+            config, "CACHE_LOCATION", "cache.location", "memcached:11211"
+        ),
+        "OPTIONS": {},
     }
 }
 
@@ -148,13 +196,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # https://docs.djangoproject.com/en/2.1/topics/i18n/
 
 LANGUAGE_CODE = "en-us"
-
 TIME_ZONE = "UTC"
-
 USE_I18N = True
-
 USE_L10N = True
-
 USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
@@ -164,84 +208,68 @@ USE_TZ = True
 STATICFILES_DIRS = []
 
 STATIC_URL = FORCE_SCRIPT_NAME + "/static/"
+STATIC_URL = get_value(config, "STATIC_URL", "static_url", "/static/")
 
 # MEDIA_ROOT = os.path.join(os.path.dirname(__file__), "..", "media")
 
-MEDIA_ROOT = os.path.join("/media/")
-DATA_CACHE_ROOT = os.path.join("/cache/")
-DATA_OUTPUT_PATH = os.path.join("/predictions")
+MEDIA_ROOT = get_value(config, "MEDIA_ROOT", "media_root", "/media/")
+DATA_CACHE_ROOT = get_value(config, "DATA_CACHE_ROOT", "data_cache_root", "/cache/")
+DATA_OUTPUT_PATH = get_value(
+    config, "DATA_OUTPUT_PATH", "data_output_path", "/predictions"
+)
 
 
-GRPC_HOST = "analyser"
-GRPC_PORT = 50051
+GRPC_HOST = get_value(config, "ANALYSER_GRPC_HOST", "analyser.grpc_host", "analyser")
+GRPC_PORT = int(get_value(config, "ANALYSER_GRPC_PORT", "analyser.grpc_port", 50051))
 
-INDEXER_PATH = "/indexer"
+ANNOTATION_MAX_LENGTH = int(
+    get_value(config, "ANNOTATION_MAX_LENGTH", "annotation_max_length", 1000)
+)
 
-ANNOTATION_MAX_LENGTH = 1000
-
-
-try:
-    from .user_settings import *
-
-except:
-    pass
-
-MEDIA_URL = "/media/"
-MEDIA_BASE_URL = "http://localhost"
-THUMBNAIL_URL = "http://localhost/thumbnails/"
+MEDIA_URL = get_value(config, "MEDIA_URL", "media_url", "/media/")
+MEDIA_BASE_URL = get_value(config, "MEDIA_BASE_URL", "media_base_url", "")
+UPLOAD_ROOT = get_value(config, "UPLOAD_ROOT", "upload_root", "/upload/")
+UPLOAD_URL = get_value(config, "UPLOAD_URL", "upload_url", "/upload/")
+THUMBNAIL_URL = get_value(config, "THUMBNAIL_URL", "thumbnail_url", "/thumbnails/")
 
 # the last resolution will use for indexing
 IMAGE_RESOLUTIONS = [{"min_dim": 200, "suffix": "_m"}, {"min_dim": 1080, "suffix": ""}]
 
 
-import json
+USER_LIMITS_ALLOWANCE = int(
+    get_value(config, "USER_LIMITS_ALLOWANCE", "user.limits.allowance", 10)
+)
+USER_LIMITS_MAX_VIDEO_SIZE = int(
+    get_value(config, "USER_LIMITS_MAX_VIDEO_SIZE", "user.limits.max_video_size", 10 * 1024**3)
+)
+USER_LIMITS_MAX_PLUGIN_RUNS = int(
+    get_value(config, "USER_LIMITS_MAX_PLUGIN_RUNS", "user.limits.max_plugin_runs", -1)
+)
 
-config_lut = {
-    "max_active_plugin_runs_per_batch": "MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH",
-    "max_active_batch_plugin_runs_per_user": "MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER",
-    "max_active_batch_plugin_runs_global": "MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL",
-    "secret_key": "SECRET_KEY",
-    "force_script_name": "FORCE_SCRIPT_NAME",
-    "allowed_hosts": "ALLOWED_HOSTS",
-    "csrf_trusted_origins": "CSRF_TRUSTED_ORIGINS",
-    "cors_allowed_origins": "CORS_ALLOWED_ORIGINS",
-    "cors_allow_all_origins": "CORS_ALLOW_ALL_ORIGINS",
-    "cors_origin_allow_all": "CORS_ORIGIN_ALLOW_ALL",
-    "debug": "DEBUG",
-    "language_code": "LANGUAGE_CODE",
-    "static_url": "STATIC_URL",
-    "media_root": "MEDIA_ROOT",
-    "media_base_url": "MEDIA_BASE_URL",
-    "data_cache_root": "DATA_CACHE_ROOT",
-    "upload_root": "UPLOAD_ROOT",
-    "media_url": "MEDIA_URL",
-    "upload_url": "UPLOAD_URL",
-    "thumbnail_url": "THUMBNAIL_URL",
-    "grpc_host": "GRPC_HOST",
-    "grpc_port": "GRPC_PORT",
-    "image_resolutions": "IMAGE_RESOLUTIONS",
-    "pipelines": "PIPELINES",
-}
+PLUGIN_WHITELIST = get_value(config, "PLUGIN_WHITELIST", "plugin.whitelist", None)
+PLUGIN_BLACKLIST = get_value(config, "PLUGIN_BLACKLIST", "plugin.blacklist", [])
 
-config_path = os.environ.get("TIBAVA_BACKEND_CONFIG")
-if config_path is not None and os.path.exists(config_path):
-    with open(config_path, "r") as f:
-        config = json.load(f)
-        for k, v in config.items():
-            if k not in config_lut:
-                continue
-            conf = {config_lut[k]: v}
-            globals().update(conf)
-
-# Environment overrides are shared by the API and worker containers.
+# Batch settings are read by both the API and Celery workers.
 for setting_name, default in (
+    ("MAX_BATCH_TOTAL_SIZE", 250 * 1024**3),
+    ("MAX_ACTIVE_BATCH_INGESTS_PER_USER", 1),
     ("MAX_ACTIVE_PLUGIN_RUNS_PER_BATCH", 4),
     ("MAX_ACTIVE_BATCH_PLUGIN_RUNS_PER_USER", 4),
     ("MAX_ACTIVE_BATCH_PLUGIN_RUNS_GLOBAL", 4),
 ):
-    globals()[setting_name] = int(os.environ.get(setting_name, globals().get(setting_name, default)))
-    if globals()[setting_name] < 1:
+    value = int(get_value(config, setting_name, f"batch.{setting_name.lower()}", default))
+    if value < 1:
         raise ValueError(f"{setting_name} must be at least 1")
+    globals()[setting_name] = value
 
-BATCH_PAUSE_FILE = os.environ.get("BATCH_PAUSE_FILE", "/cache/batch-processing.paused")
+MAX_BATCH_FILES = get_value(config, "MAX_BATCH_FILES", "batch.max_batch_files", None)
+if MAX_BATCH_FILES is not None:
+    MAX_BATCH_FILES = int(MAX_BATCH_FILES)
+    if MAX_BATCH_FILES < 1:
+        raise ValueError("MAX_BATCH_FILES must be at least 1 when configured")
+MAX_BATCH_FILE_SIZE = get_value(config, "MAX_BATCH_FILE_SIZE", "batch.max_batch_file_size", None)
+if MAX_BATCH_FILE_SIZE is not None:
+    MAX_BATCH_FILE_SIZE = int(MAX_BATCH_FILE_SIZE)
+BATCH_UPLOAD_ROOT = get_value(config, "BATCH_UPLOAD_ROOT", "batch.upload_root", "/tmp/video_batches")
+BATCH_PAUSE_FILE = get_value(config, "BATCH_PAUSE_FILE", "batch.pause_file", "/cache/batch-processing.paused")
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1

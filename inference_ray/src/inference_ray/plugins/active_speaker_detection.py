@@ -1,9 +1,9 @@
 from inference_ray.plugin import AnalyserPlugin, AnalyserPluginManager
-from data import AnnotationData, Annotation, AudioData, FacesData, VideoData
+from tibava_data import AnnotationData, Annotation, AudioData, FacesData, VideoData
 
-from data import DataManager, Data
+from tibava_data import DataManager, Data
 
-from utils import VideoDecoder
+from tibava_utils import VideoDecoder
 
 import logging
 from typing import Callable, Dict, List, Any
@@ -173,9 +173,7 @@ class ActiveSpeakerDetection(
                                 inputA = (
                                     torch.FloatTensor(
                                         audioFeature[
-                                            i
-                                            * duration
-                                            * 100 : (i + 1)
+                                            i * duration * 100 : (i + 1)
                                             * duration
                                             * 100,
                                             :,
@@ -187,9 +185,7 @@ class ActiveSpeakerDetection(
                                 inputV = (
                                     torch.FloatTensor(
                                         videoFeature[
-                                            i
-                                            * duration
-                                            * fps : (i + 1)
+                                            i * duration * fps : (i + 1)
                                             * duration
                                             * fps,
                                             :,

@@ -1,0 +1,62 @@
+# ==============================================================================
+# Tibava Backend Configuration (TOML)
+# Default values provided. Uncomment or change values to override.
+# ==============================================================================
+
+secret_key = "default_secret"
+debug = false
+force_script_name = "/"
+
+allowed_hosts = ["localhost", "127.0.0.1", "tactik-pc", "130.241.23.170", "tactik.appadem.in"]
+csrf_trusted_origins = ["http://localhost", "http://localhost:8000", "http://127.0.0.1", "http://127.0.0.1:8000", "http://tactik-pc", "http://tactik-pc:8000", "http://130.241.23.170", "http://130.241.23.170:8000", "http://tactik.appadem.in", "http://tactik.appadem.in:8000", "https://tactik.appadem.in"]
+
+cors_origin_allow_all = false
+cors_allowed_origins = ["http://localhost", "http://localhost:8080", "http://127.0.0.1", "http://127.0.0.1:8080", "http://tactik-pc", "http://tactik-pc:8080", "http://130.241.23.170", "http://130.241.23.170:8080", "http://tactik.appadem.in", "http://tactik.appadem.in:8080", "https://tactik.appadem.in"]
+cors_allow_credentials = true
+
+annotation_max_length = 1000
+media_root = "/media/"
+media_url = "/media/"
+media_base_url = "https://tactik.appadem.in"
+thumbnail_url = "https://tactik.appadem.in/thumbnails/"
+upload_root = "/upload/"
+upload_url = "/upload/"
+static_url = "/static/"
+data_cache_root = "/cache/"
+data_output_path = "/predictions"
+
+# Database Configuration
+[database]
+engine = "django.db.backends.postgresql"
+name = "tibava"
+user = "postgres"
+password = "postgres"
+host = "postgres"
+port = 5432
+
+# Cache Configuration
+[cache]
+backend = "django.core.cache.backends.memcached.PyMemcacheCache"
+location = "memcached:11211"
+client_class = "django_redis.client.DefaultClient"
+
+# Analyser gRPC Service Settings
+[analyser]
+grpc_host = "analyser"
+grpc_port = 50051
+
+# User Limits Configuration
+[user.limits]
+allowance = 10
+max_video_size = 10737418240
+max_plugin_runs = -1
+
+[batch]
+# Leave max_batch_files unset to preserve the fork's unlimited file count.
+max_batch_total_size = 268435456000
+max_active_batch_ingests_per_user = 1
+max_active_plugin_runs_per_batch = 4
+max_active_batch_plugin_runs_per_user = 4
+max_active_batch_plugin_runs_global = 4
+upload_root = "/tmp/video_batches"
+pause_file = "/cache/batch-processing.paused"

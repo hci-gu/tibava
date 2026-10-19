@@ -16,12 +16,12 @@ from google.protobuf.json_format import MessageToDict
 import grpc
 
 
-from interface import analyser_pb2, analyser_pb2_grpc
+from tibava_interface import analyser_pb2, analyser_pb2_grpc
 from inference_ray.plugin import AnalyserProgressCallback
 from inference_ray.plugin import AnalyserPluginManager
-from data import DataManager, Data
-from utils.cache import get_hash_for_plugin
-from utils.cache import CacheManager
+from tibava_data import DataManager, Data
+from tibava_utils.cache import get_hash_for_plugin
+from tibava_utils.cache import CacheManager
 
 
 class AnalyserCacheWrapper:
@@ -83,7 +83,7 @@ class AnalyserCacheWrapper:
         if not cached:
             logging.info(f"[AnalyserPluginManager] {run_id} plugin: {plugin_to_run}")
             logging.info(
-                f"[AnalyserPluginManager] {run_id} data: {[{k:x.id} for k,x in inputs.items()]}"
+                f"[AnalyserPluginManager] {run_id} data: {[{k: x.id} for k, x in inputs.items()]}"
             )
             logging.info(f"[AnalyserPluginManager] {run_id} parameters: {parameters}")
             results = self.plugin(
@@ -103,7 +103,7 @@ class AnalyserCacheWrapper:
                 )
                 return None
             logging.info(
-                f"[AnalyserPluginManager] {run_id} results: {[{k:x} for k,x in results.items()]}"
+                f"[AnalyserPluginManager] {run_id} results: {[{k: x} for k, x in results.items()]}"
             )
 
         if self.cache:
@@ -243,7 +243,7 @@ class Commune(analyser_pb2_grpc.AnalyserServicer):
         self.config = config
         self.managers = init_plugins(config)
         self.process_pool = futures.ThreadPoolExecutor(
-            max_workers=self.config.get("num_worker", 1),
+            max_workers=self.config.get("num_worker", 4),
             initializer=init_process,
             initargs=(config,),
         )

@@ -1,7 +1,7 @@
 from inference_ray.plugin import AnalyserPlugin, AnalyserPluginManager  # type: ignore
-from data import AudioData, AnnotationData, ListData, Annotation  # type: ignore
+from tibava_data import AudioData, AnnotationData, ListData, Annotation  # type: ignore
 
-from data import DataManager, Data  # type: ignore
+from tibava_data import DataManager, Data  # type: ignore
 
 from typing import Callable, Dict
 import logging
@@ -162,12 +162,35 @@ class WhisperX(
                 speaker_transcription = whisperx.assign_word_speakers(
                     diarize_segments, aligned_transcription
                 )
-                speaker_turns = get_speaker_turns(speaker_transcription["segments"])
 
-                for speaker, annotations in speaker_turns.items():
-                    with output_data.create_data("AnnotationData") as ann_data:
-                        ann_data.annotations.extend(annotations)
-                        ann_data.name = speaker
+                transcript = []
+                speakers = []
+                for segment in sorted(
+                    speaker_transcription["segments"], key=lambda x: x["start"]
+                ):
+                    transcript.append(
+                        Annotation(
+                            start=segment["start"],
+                            end=segment["end"],
+                            labels=[segment.get("text", "").strip()],
+                        )
+                    )
+
+                    speakers.append(
+                        Annotation(
+                            start=segment["start"],
+                            end=segment["end"],
+                            labels=[segment.get("speaker", "Unknown")],
+                        )
+                    )
+
+                with output_data.create_data("AnnotationData") as ann_data:
+                    ann_data.annotations.extend(transcript)
+                    ann_data.name = "Speech Transcript"
+
+                with output_data.create_data("AnnotationData") as ann_data:
+                    ann_data.annotations.extend(speakers)
+                    ann_data.name = "Speaker"
 
                 self.update_callbacks(callbacks, progress=1.0)
                 return {"annotations": output_data}

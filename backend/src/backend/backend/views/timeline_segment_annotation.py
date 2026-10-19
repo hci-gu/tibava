@@ -14,7 +14,6 @@ import imageio
 from numpy import isin
 import time
 
-import wand.image as wimage
 
 from backend.utils import download_url, download_file, media_url_to_video
 

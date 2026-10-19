@@ -232,7 +232,7 @@ services:
 
     working_dir: /app/backend/src/backend/
     environment:
-      TIBAVA_BACKEND_CONFIG: /app/backend/src/backend/config.json
+      DJANGO_CONFIG_PATH: /app/backend/src/backend/backend_config.toml
       UV_PYTHON_DOWNLOADS: never
       UV_NO_MANAGED_PYTHON: "1"
       UV_PYTHON: /usr/local/bin/python3.12
@@ -290,7 +290,7 @@ services:
 
     working_dir: /app/
     environment:
-      TIBAVA_BACKEND_CONFIG: /app/backend/src/backend/config.json
+      DJANGO_CONFIG_PATH: /app/backend/src/backend/backend_config.toml
       UV_PYTHON_DOWNLOADS: never
       UV_NO_MANAGED_PYTHON: "1"
       UV_PYTHON: /usr/local/bin/python3.12

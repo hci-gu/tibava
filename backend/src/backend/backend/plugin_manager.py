@@ -7,7 +7,9 @@ from typing import List
 
 from celery import shared_task
 from backend.models import PluginRun, Video, TibavaUser, PluginRunResult
-from data import DataManager
+
+from backend.exceptions import RateLimitExceededException
+from tibava_data import DataManager
 
 from django.conf import settings
 from backend.utils.task import PluginRunFailed
@@ -42,7 +44,20 @@ class PluginManager:
         return export_helper
 
     def __contains__(self, plugin):
-        return plugin in self._plugins
+        return plugin in self.plugins()
+
+    def plugins(self):
+        plugins = self._plugins
+        if settings.PLUGIN_WHITELIST is not None:
+            plugins = {
+                x: y for x, y in plugins.items() if x in settings.PLUGIN_WHITELIST
+            }
+
+        if settings.PLUGIN_BLACKLIST is not None:
+            plugins = {
+                x: y for x, y in plugins.items() if x not in settings.PLUGIN_BLACKLIST
+            }
+        return plugins
 
     def __call__(
         self,
@@ -58,7 +73,7 @@ class PluginManager:
         if parameters is None:
             parameters = []
 
-        if plugin not in self._plugins:
+        if plugin not in self.plugins():
             print("Unknown Plugin")
             return {"status": False}
 
@@ -98,7 +113,7 @@ class PluginManager:
             )
         else:
             try:
-                plugin_result = self._plugins[plugin]()(
+                plugin_result = self.plugins()[plugin]()(
                     parameters,
                     user=user,
                     video=video,
@@ -185,7 +200,7 @@ def generate_plugin_run_result_cache(
                 logger.exception("Cache couldn't write")
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, max_retries=None)
 def run_plugin(self, args):
     plugin = args.get("plugin")
     parameters = args.get("parameters")
@@ -197,6 +212,21 @@ def run_plugin(self, args):
 
     video_db = Video.objects.get(id=video)
     user_db = TibavaUser.objects.get(id=user)
+
+    running_plugins_db = PluginRun.objects.filter(
+        video__owner=user_db, status=PluginRun.STATUS_RUNNING
+    )
+
+    logging.info(
+        f"Check runable plugin limits for User {user_db} {len(running_plugins_db)} >= {user_db.max_plugin_runs}"
+    )
+    if (
+        user_db.max_plugin_runs > 0
+        and len(running_plugins_db) >= user_db.max_plugin_runs
+    ):
+        logging.info(f"Limits reached: {user_db} {len(running_plugins_db)}")
+        raise self.retry(exc=RateLimitExceededException(), countdown=60)
+
     plugin_run_db = None
     if not dry_run:
         plugin_run_db = PluginRun.objects.get(id=plugin_run)

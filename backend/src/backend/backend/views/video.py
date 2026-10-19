@@ -44,6 +44,7 @@ class VideoUpload(View):
                     owner=request.user,
                     title=request.POST.get("title"),
                     max_size=request.user.max_video_size,
+                    terms_accepted=True,
                 )
 
                 if ingest_result["status"] != "ok":
@@ -102,7 +103,9 @@ class VideoGet(View):
                 return JsonResponse({"status": "error"}, status=500)
 
             entries = []
-            for video in Video.objects.filter(id=request.GET.get("id"), owner=request.user):
+            for video in Video.objects.filter(
+                id=request.GET.get("id"), owner=request.user
+            ):
                 video_id_hex = video.id.hex if not video.file else video.file.hex
                 entries.append(
                     {
@@ -115,6 +118,41 @@ class VideoGet(View):
             return JsonResponse({"status": "ok", "entry": entries[0]})
         except Exception:
             logger.exception("Failed to get video")
+            return JsonResponse({"status": "error"}, status=500)
+
+
+class VideoAcceptTerms(View):
+    def post(self, request):
+        try:
+            if not request.user.is_authenticated:
+                return JsonResponse({"status": "error"}, status=500)
+            try:
+                body = request.body.decode("utf-8")
+            except (UnicodeDecodeError, AttributeError):
+                body = request.body
+
+            try:
+                data = json.loads(body)
+            except Exception as e:
+                return JsonResponse({"status": "error"}, status=500)
+
+            if "id" not in data:
+                return JsonResponse(
+                    {"status": "error", "type": "missing_values"}, status=500
+                )
+
+            try:
+                video_db = Video.objects.get(id=data.get("id"), owner=request.user)
+            except Video.DoesNotExist:
+                return JsonResponse(
+                    {"status": "error", "type": "not_exist"}, status=500
+                )
+
+            video_db.terms_accepted = True
+            video_db.save()
+            return JsonResponse({"status": "ok", "entry": video_db.to_dict()})
+        except Exception:
+            logger.exception("Failed to accept terms for video")
             return JsonResponse({"status": "error"}, status=500)
 
 

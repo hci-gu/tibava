@@ -12,7 +12,6 @@ from pathlib import Path
 from urllib.parse import urlparse
 import imageio
 
-import wand.image as wimage
 
 from backend.utils import download_url, download_file, media_url_to_video
 

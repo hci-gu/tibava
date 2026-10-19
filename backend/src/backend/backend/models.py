@@ -10,7 +10,7 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from backend.utils.color import rgb_to_hex, random_rgb
 
-from data import DataManager
+from tibava_data import DataManager
 from backend.utils import media_path_to_video
 from .managers import TibavaUserManager
 
@@ -23,8 +23,10 @@ def random_color_string():
 
 
 class TibavaUser(AbstractUser):
-    allowance = models.IntegerField(default=10)
-    max_video_size = models.BigIntegerField(default=10 * 1024 * 1024 * 1024)  # 10 GiB
+    allowance = models.IntegerField(default=settings.USER_LIMITS_ALLOWANCE)
+    max_video_size = models.BigIntegerField(default=settings.USER_LIMITS_MAX_VIDEO_SIZE)
+    max_plugin_runs = models.IntegerField(default=settings.USER_LIMITS_MAX_PLUGIN_RUNS)
+
     objects = TibavaUserManager()
 
     def to_dict(self, include_refs_hashes=True, include_refs=False, **kwargs):
@@ -33,6 +35,7 @@ class TibavaUser(AbstractUser):
             "username": self.username,
             "allowance": self.allowance,
             "max_video_size": self.max_video_size,
+            "max_plugin_runs": self.max_plugin_runs,
         }
 
     def __str__(self):
@@ -56,6 +59,7 @@ class Video(models.Model):
     analyser_data_id = models.CharField(max_length=64, blank=True, null=True)
     analyser_data_file = models.UUIDField(blank=True, null=True)
     analyser_data_ext = models.CharField(max_length=256, blank=True, null=True)
+    terms_accepted = models.BooleanField(default=False)
 
     def to_dict(
         self,
@@ -66,7 +70,7 @@ class Video(models.Model):
     ):
         return {
             "name": self.name,
-            "file": self.file.hex,
+            "file": self.file.hex if self.file else None,
             "id": self.id.hex,
             "ext": self.ext,
             "date": self.date,
@@ -83,6 +87,7 @@ class Video(models.Model):
                 if include_timeline_count
                 else None
             ),
+            "terms_accepted": self.terms_accepted,
         }
 
     def clone(self, owner=None, include_timelines=True, include_annotations=True):
@@ -449,6 +454,8 @@ class PluginRunResult(models.Model):
     TYPE_CLUSTER = "CL"
     TYPE_FACE = "FA"
     TYPE_IMAGE_EMBEDDINGS = "E"
+    TYPE_BBOXES = "B"
+    TYPE_KPSS = "K"
     TYPE = {
         TYPE_VIDEO: "VIDEO",
         TYPE_IMAGES: "IMAGES",
@@ -459,6 +466,8 @@ class PluginRunResult(models.Model):
         TYPE_CLUSTER: "CLUSTER",
         TYPE_FACE: "FACE",
         TYPE_IMAGE_EMBEDDINGS: "IMAGE_EMBEDDINGS",
+        TYPE_BBOXES: "TYPE_BBOXES",
+        TYPE_KPSS: "TYPE_KPSS",
     }
 
     type = models.CharField(
@@ -485,27 +494,35 @@ def delete_pluginresult_data(sender, instance, **kwargs):
     )
     data_manager = DataManager("/predictions/")
 
-    if instance.type == PluginRunResult.TYPE_IMAGES:
-        data = data_manager.load(instance.data_id)
-        try:
-            with data:
-                data.load()
-            images = data.images
-        except AttributeError:
-            images = []
-        for image in images:
-            path = data_manager._create_file_path(image.id, image.ext)
+    # check if the data are reference somewhere else
+    for x in PluginRunResult.objects.filter(data_id=instance.data_id):
+        logger.info(f"Found exist reference to this data package: {x.to_dict()}")
+    if len(PluginRunResult.objects.filter(data_id=instance.data_id)) != 0:
+        return
+    try:
+        if instance.type == PluginRunResult.TYPE_IMAGES:
+            data = data_manager.load(instance.data_id)
+            try:
+                with data:
+                    data.load()
+                images = data.images
+            except AttributeError:
+                images = []
+            for image in images:
+                path = data_manager._create_file_path(image.id, image.ext)
+                if os.path.exists(path):
+                    os.remove(path)
+
+        for clusteritem in instance.cluster_items.all():
+            filename, ext = clusteritem.image_path.split("/")[-1].split(".")
+
+            path = data_manager._create_file_path(filename, ext)
             if os.path.exists(path):
                 os.remove(path)
 
-    for clusteritem in instance.cluster_items.all():
-        filename, ext = clusteritem.image_path.split("/")[-1].split(".")
-
-        path = data_manager._create_file_path(filename, ext)
-        if os.path.exists(path):
-            os.remove(path)
-
-    data_manager.delete(instance.data_id)
+        data_manager.delete(instance.data_id)
+    except Exception as e:
+        logger.error(f"Error deleting the data package: {instance.to_dict()} ({e})")
 
 
 class Timeline(models.Model):
@@ -883,7 +900,6 @@ class ClusterItem(models.Model):
 
 
 class VideoAnalysisState(models.Model):
-
     video = models.OneToOneField(
         Video,
         on_delete=models.CASCADE,

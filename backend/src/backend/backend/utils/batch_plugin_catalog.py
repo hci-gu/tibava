@@ -125,15 +125,23 @@ BATCH_PLUGIN_CATALOG = [
                 "parameters": [
                     parameter("text_field", "timeline", "Audio Classification"),
                     parameter(
-                        "select_options",
-                        "segment_type",
-                        "Shot",
-                        "Segment type",
-                        items=["Shot", "Speaker"],
+                        "select_timeline",
+                        "shot_timeline_id",
+                        None,
+                        "Shot timeline",
                     ),
                 ],
-                "optional_parameters": [],
-                "batch": simple_batch(),
+                "optional_parameters": [
+                    parameter("slider", "top_k", 3, "Maximum labels", min=1, max=527, step=1),
+                    parameter("slider", "threshold", 0.5, "Confidence threshold", min=0, max=1, step=0.05),
+                ],
+                "batch": {
+                    **simple_batch(),
+                    "parameter_strategies": {
+                        "shot_timeline_id": ["previous_step_output", "timeline_by_name"],
+                    },
+                    "outputs": {"timelines": {"annotations": "annotation_timeline"}},
+                },
             },
         ],
     },
@@ -575,6 +583,43 @@ BATCH_PLUGIN_CATALOG = [
         ],
     },
 ]
+
+
+# Upstream's new plugins remain available in the single-video dialog. They do
+# not opt into the fork's batch scheduler until their batch behavior is tested.
+for plugin_name, label in (
+    ("movie_pattern_intensify", "Movie pattern: intensification"),
+    ("movie_pattern_shot_reverse_shot", "Movie pattern: shot reverse shot"),
+    ("movie_pattern_opposition", "Movie pattern: opposition"),
+    ("movie_pattern_frameshare", "Movie pattern: frame share"),
+    ("vllm_ollama", "Visual question answering (Ollama)"),
+):
+    options = []
+    if plugin_name != "vllm_ollama":
+        options = [
+            parameter("slider", "fps", 2, "FPS", min=1, max=20, step=1),
+            parameter("slider", "min_length", 3, "Minimum length", min=1, max=50, step=1),
+        ]
+        if plugin_name != "movie_pattern_intensify":
+            options += [
+                parameter("select_options", "clustering_method", "DBScan", "Clustering method", items=["Agglomerative", "DBScan"]),
+                parameter("slider", "cluster_threshold", 0.5, "Cluster threshold", min=0.3, max=0.7, step=0.01),
+                parameter("slider", "max_cluster", 50, "Maximum clusters", min=1, max=100, step=1),
+                parameter("slider", "max_samples_per_cluster", 30, "Samples per cluster", min=1, max=100, step=1),
+                parameter("slider", "min_face_height", 0.1, "Minimum face height", min=0, max=1, step=0.05),
+            ]
+    BATCH_PLUGIN_CATALOG[4]["children"].append({
+        "name": label,
+        "description": label,
+        "plugin": plugin_name,
+        "icon": "mdi-image-multiple",
+        "parameters": [
+            parameter("text_field", "timeline", label),
+            parameter("select_timeline", "shot_timeline_id", None, "Shot timeline"),
+        ] + ([parameter("text_field", "query_term", "", "Question")] if plugin_name == "vllm_ollama" else []),
+        "optional_parameters": options,
+        "batch": unsupported("Batch execution is not yet supported for this upstream plugin."),
+    })
 
 
 def list_batch_plugin_catalog():

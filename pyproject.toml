@@ -12,4 +12,4 @@ dependencies = [
 ]
 
 [tool.uv.workspace]
-members = ["packages/*", "analyser", "backend", "inference_ray"]
+members = ["packages/tibava_data", "packages/tibava_interface", "packages/tibava_utils", "analyser", "backend", "inference_ray"]

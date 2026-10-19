@@ -40,7 +40,7 @@ def save_video_file(file, output_dir, output_name, max_size=None, extensions=Non
         if extensions is not None and not is_allowed_video_extension(file.name, extensions):
             return {"status": "error", "type": "wrong_file_extension"}
 
-        if max_size is not None and getattr(file, "size", 0) > max_size:
+        if max_size is not None and max_size > 0 and getattr(file, "size", 0) > max_size:
             return {"status": "error", "type": "file_too_large"}
 
         ext = get_file_extension(file.name)
@@ -69,7 +69,7 @@ def extract_video_metadata(path):
     }
 
 
-def ingest_video_file(file, owner, title=None, max_size=None, source_metadata=None):
+def ingest_video_file(file, owner, title=None, max_size=None, source_metadata=None, terms_accepted=False):
     source_metadata = source_metadata or {}
     video_id_uuid = uuid.uuid4()
     video_id = video_id_uuid.hex
@@ -101,6 +101,7 @@ def ingest_video_file(file, owner, title=None, max_size=None, source_metadata=No
             width=meta["width"],
             height=meta["height"],
             owner=owner,
+            terms_accepted=terms_accepted,
         )
     except Exception:
         logger.exception("Failed to ingest video metadata")

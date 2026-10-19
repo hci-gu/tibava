@@ -1,19 +1,19 @@
 from typing import Dict
-import logging
+import math
 
 from ..utils.analyser_client import TaskAnalyserClient
 
-from backend.models import PluginRun, Video, Timeline
 from backend.plugin_manager import PluginManager
 
 from backend.utils.parser import Parser
-from backend.utils.task import Task
+from backend.utils.task import Task, PluginRunFailed
 from backend.utils.color import get_color_from_label
 
-from data import DataManager  # type: ignore
+from tibava_data import DataManager, Shot
 from backend.models import (
     Annotation,
     PluginRun,
+    PluginRunResult,
     TimelineSegmentAnnotation,
     Video,
     TibavaUser,
@@ -21,7 +21,9 @@ from backend.models import (
     TimelineSegment,
 )
 from django.db import transaction
+from django.db.models import Q
 from django.conf import settings
+from django.core.exceptions import ValidationError
 
 
 @PluginManager.export_parser("audio_classification")
@@ -29,7 +31,9 @@ class AudioClassificationParser(Parser):
     def __init__(self):
         self.valid_parameter = {
             "timeline": {"parser": str, "default": "Audio Classification"},
-            "segment_type": {"parser": str},  # Speaker or Shot
+            "shot_timeline_id": {"parser": str, "required": True},
+            "top_k": {"parser": int, "default": 3},
+            "threshold": {"parser": float, "default": 0.5},
         }
 
 
@@ -51,6 +55,27 @@ class AudioClassification(Task):
         dry_run: bool = False,
         **kwargs,
     ):
+        if not user or not video or video.owner_id != user.id:
+            raise PluginRunFailed("invalid_shot_timeline")
+        try:
+            shot_timeline = Timeline.objects.get(
+                Q(plugin_run_result__type=PluginRunResult.TYPE_SHOTS) | Q(name__iexact="Shots"),
+                id=parameters.get("shot_timeline_id"),
+                video=video,
+                video__owner=user,
+                type=Timeline.TYPE_ANNOTATION,
+            )
+        except (Timeline.DoesNotExist, ValueError, TypeError, ValidationError):
+            raise PluginRunFailed("invalid_shot_timeline")
+        segments = list(TimelineSegment.objects.filter(timeline=shot_timeline))
+        if not segments or any(
+            not math.isfinite(x.start) or not math.isfinite(x.end) or x.start < 0 or x.end <= x.start
+            for x in segments
+        ):
+            raise PluginRunFailed("invalid_shot_segments")
+        if not 1 <= parameters.get("top_k", 3) <= 527 or not 0 <= parameters.get("threshold", 0.5) <= 1:
+            raise PluginRunFailed("invalid_audio_parameters")
+
         manager = DataManager(self.config["output_path"])
         client = TaskAnalyserClient(
             host=self.config["analyser_host"],
@@ -74,111 +99,70 @@ class AudioClassification(Task):
         if audio_result is None:
             raise Exception
 
-        if parameters.get("segment_type") == "Speaker":
-            segmentation_result = self.run_analyser(
-                client,
-                "whisper_x",
-                parameters={"language_code": None},
-                inputs={**audio_result[0]},
-                outputs=["annotations"],
-            )
-        elif parameters.get("segment_type") == "Shot":
-            segmentation_result = self.run_analyser(
-                client,
-                "transnet_shotdetection",
-                parameters={"fps": 2.0},  # default value
-                inputs={"video": video_id},
-                outputs=["shots"],
-            )
-            logging.info(segmentation_result)
-            segmentation_result[0]["annotations"] = segmentation_result[0]["shots"]
-        else:
-            raise NotImplementedError(
-                f"Unknown segment type: {parameters.get('segment_type')}"
-            )
-        if segmentation_result is None:
-            raise Exception
-
-        logging.info(f"{segmentation_result=}")
+        shots = manager.create_data("ShotsData")
+        with shots:
+            for segment in segments:
+                shots.shots.append(Shot(start=segment.start, end=segment.end))
+        shots_id = client.upload_data(shots)
+        if not shots_id:
+            raise PluginRunFailed("shot_upload_failed")
 
         result = self.run_analyser(
             client,
             "audio_classification",
             inputs={
                 "audio": audio_result[0]["audio"],
-                "annotations": segmentation_result[0]["annotations"],
+                "shots": shots_id,
             },
-            parameters={"segment_type": parameters.get("segment_type")},
+            parameters={
+                "top_k": parameters.get("top_k", 3),
+                "threshold": parameters.get("threshold", 0.5),
+            },
             downloads=["annotations"],
         )
 
-        logging.info(f"{result=}")
         if result is None:
-            raise Exception
+            raise PluginRunFailed("audio_classification_failed")
 
-        def create_timelines(
-            data,
-            timelines_name: str,
-            annotation_key: str,
-        ):
-            data.extract_all(manager)
-
-            parent_timeline = Timeline.objects.create(
-                video=video,
-                name=timelines_name,
-                type=Timeline.TYPE_ANNOTATION,
-            )
-
-            result_timelines = {}
-            for _, sub_data in data:
-                with sub_data as sub_data:
-                    timeline = Timeline.objects.create(
-                        video=video,
-                        name=sub_data.name,
-                        type=Timeline.TYPE_ANNOTATION,
-                        parent=parent_timeline,
-                    )
-                    result_timelines[f"{timelines_name}_{sub_data.name}"] = (
-                        timeline.id.hex
-                    )
-                    for annotation in sub_data.annotations:
-                        timeline_segment_db = TimelineSegment.objects.create(
-                            timeline=timeline,
-                            start=annotation.start,
-                            end=annotation.end,
-                        )
-                        for label_object in annotation.labels:
-                            label = str(label_object[annotation_key])
-                            if len(label) > settings.ANNOTATION_MAX_LENGTH:
-                                label = (
-                                    label[: max(0, settings.ANNOTATION_MAX_LENGTH - 4)]
-                                    + " ..."
-                                )
-                            annotation_db, _ = Annotation.objects.get_or_create(
-                                name=label,
-                                video=video,
-                                owner=user,
-                                color=get_color_from_label(label),
-                            )
-
-                            TimelineSegmentAnnotation.objects.create(
-                                annotation=annotation_db,
-                                timeline_segment=timeline_segment_db,
-                            )
-            return result_timelines
+        if dry_run or plugin_run is None:
+            return {}
 
         with transaction.atomic():
-            result_timelines = {}
             with result[1]["annotations"] as data:
-                logging.info(data)
-                result_timelines.update(
-                    create_timelines(data, parameters["timeline"], "label_pred")
+
+                timeline = Timeline.objects.create(
+                    video=video,
+                    name=parameters.get("timeline"),
+                    type=Timeline.TYPE_ANNOTATION,
                 )
+                for annotation in data.annotations:
+                    timeline_segment_db = TimelineSegment.objects.create(
+                        timeline=timeline,
+                        start=annotation.start,
+                        end=annotation.end,
+                    )
+                    for label in annotation.labels:
+                        if len(label) > settings.ANNOTATION_MAX_LENGTH:
+                            label = (
+                                label[: max(0, settings.ANNOTATION_MAX_LENGTH - 4)]
+                                + " ..."
+                            )
+                        annotation_db, _ = Annotation.objects.get_or_create(
+                            name=label,
+                            video=video,
+                            owner=user,
+                            color=get_color_from_label(label),
+                        )
+
+                        TimelineSegmentAnnotation.objects.create(
+                            annotation=annotation_db,
+                            timeline_segment=timeline_segment_db,
+                        )
 
             return {
                 "plugin_run": plugin_run.id.hex,
                 "plugin_run_results": [],
-                "timelines": result_timelines,
+                "timelines": {"annotations": timeline.id.hex},
                 "data": {
                     "annotations": result[1]["annotations"].id,
                 },

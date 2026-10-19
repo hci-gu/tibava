@@ -1,3 +1,5 @@
+.vagrant/
+*.sif
 *.tar.gz
 *.bak
 
