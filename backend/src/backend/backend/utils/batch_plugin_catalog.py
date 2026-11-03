@@ -196,14 +196,14 @@ BATCH_PLUGIN_CATALOG = [
             },
             {
                 "name": "Active speaker detection",
-                "description": "Detect active speakers from shot segments.",
+                "description": "Detect active speakers from shot segments at the model's required 25 FPS.",
                 "icon": "mdi-waveform",
                 "plugin": "active_speaker_detection",
                 "parameters": [
                     parameter("text_field", "timeline", "Active Speaker"),
                     parameter("select_timeline", "shot_timeline_id", None, "Shot timeline"),
                 ],
-                "optional_parameters": [parameter("slider", "fps", 25, "FPS", min=1, max=30, step=1)],
+                "optional_parameters": [],
                 "batch": {
                     **simple_batch(),
                     "parameter_strategies": {
@@ -217,6 +217,18 @@ BATCH_PLUGIN_CATALOG = [
         "id": 3,
         "name": "Visual",
         "children": [
+            {
+                "name": "Body pose and people",
+                "description": "Detect people and 17 body keypoints for video overlays. Requires the body pose model on the server.",
+                "icon": "mdi-human",
+                "plugin": "body_pose",
+                "parameters": [],
+                "optional_parameters": [
+                    parameter("slider", "fps", 2, "FPS", min=1, max=25, step=1),
+                    parameter("slider", "threshold", 0.8, "Person confidence", min=0.1, max=1, step=0.05),
+                ],
+                "batch": simple_batch(),
+            },
             {
                 "name": "Color analysis",
                 "description": "Analyze dominant colors.",

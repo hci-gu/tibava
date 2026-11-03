@@ -529,16 +529,17 @@ class OCRTextDetectorONNX(AnalyserPlugin):
                 # add the merged boxes to bbox_data and strings_data
                 for i in range(len(stitched)):
                     box = stitched[i]
+                    height, width = frame["frame"].shape[:2]
                     bbox = BboxData(
-                        x=box["box"][0],
-                        y=box["box"][1],
-                        w=box["box"][2] - box["box"][0],
-                        h=box["box"][5] - box["box"][1],
-                        det_score=0.0,
+                        x=float(box["box"][0] / width),
+                        y=float(box["box"][1] / height),
+                        w=float((box["box"][2] - box["box"][0]) / width),
+                        h=float((box["box"][5] - box["box"][1]) / height),
+                        det_score=None,  # Merged text has no calibrated detection score.
                         time=frame.get("time"),
                         delta_time=1 / parameters.get("fps"),
                     )
-                    # bboxes_data.bboxes.append(bbox)
+                    bboxes_data.bboxes.append(bbox)
 
                     text = StringData(ref_id=bbox.id)
                     text.text = box["text"]
@@ -598,7 +599,7 @@ class OCRVideoDetectorONNX(
     AnalyserPlugin,
     config=default_config,
     parameters=default_parameters,
-    version="0.1",
+    version="0.3",
     requires=requires,
     provides=provides,
 ):

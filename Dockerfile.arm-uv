@@ -4,6 +4,8 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 # Wand requires ImageMagick's MagickWand shared library.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    fonts-dejavu-core \
     imagemagick \
     libmagickwand-6.q16-6 \
     libgl1 \

@@ -109,6 +109,39 @@ def delete_video_file(sender, instance, **kwargs):
         os.remove(path)
 
 
+class VideoVisualizationExport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    video = models.ForeignKey(Video, on_delete=models.CASCADE, related_name="visualization_exports")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    status = models.CharField(max_length=16, default="queued")
+    progress = models.FloatField(default=0)
+    cancel_requested = models.BooleanField(default=False)
+    preview = models.BooleanField(default=False)
+    configuration = models.JSONField(default=dict)
+    error = models.CharField(max_length=512, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def to_dict(self):
+        return {
+            "id": self.id.hex, "video_id": self.video_id.hex,
+            "created_at": self.created_at, "status": self.status,
+            "progress": self.progress, "preview": self.preview,
+            "cancel_requested": self.cancel_requested,
+            "configuration": self.configuration, "error": self.error,
+        }
+
+
+@receiver(post_delete, sender=VideoVisualizationExport)
+def delete_visualization_export_files(sender, instance, **kwargs):
+    from backend.utils.visualization_export import remove_export_files
+
+    remove_export_files(instance.id)
+
+
 class SavedBatchPreset(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(
@@ -449,6 +482,9 @@ class PluginRunResult(models.Model):
     TYPE_CLUSTER = "CL"
     TYPE_FACE = "FA"
     TYPE_IMAGE_EMBEDDINGS = "E"
+    TYPE_BBOXES = "BB"
+    TYPE_KEYPOINTS = "KP"
+    TYPE_SPATIAL = "SP"
     TYPE = {
         TYPE_VIDEO: "VIDEO",
         TYPE_IMAGES: "IMAGES",
@@ -459,6 +495,9 @@ class PluginRunResult(models.Model):
         TYPE_CLUSTER: "CLUSTER",
         TYPE_FACE: "FACE",
         TYPE_IMAGE_EMBEDDINGS: "IMAGE_EMBEDDINGS",
+        TYPE_BBOXES: "BBOXES",
+        TYPE_KEYPOINTS: "KEYPOINTS",
+        TYPE_SPATIAL: "SPATIAL",
     }
 
     type = models.CharField(

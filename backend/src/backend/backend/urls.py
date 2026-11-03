@@ -89,6 +89,11 @@ urlpatterns = [
     path("video/delete", views.VideoDelete.as_view(), name="video_delete"),
     #
     path("video/export", views.VideoExport.as_view(), name="video_export"),
+    path("video/visualization/sources", views.VideoVisualizationSources.as_view(), name="video_visualization_sources"),
+    path("video/visualization/create", views.VideoVisualizationCreate.as_view(), name="video_visualization_create"),
+    path("video/visualization/status", views.VideoVisualizationStatus.as_view(), name="video_visualization_status"),
+    path("video/visualization/cancel", views.VideoVisualizationCancel.as_view(), name="video_visualization_cancel"),
+    path("video/visualization/download", views.VideoVisualizationDownload.as_view(), name="video_visualization_download"),
     #
     path("plugin/list", views.PluginList.as_view(), name="plugin_list"),
     path("plugin/run/new", views.PluginRunNew.as_view(), name="plugin_run_new"),

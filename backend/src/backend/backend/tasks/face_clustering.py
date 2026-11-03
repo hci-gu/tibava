@@ -103,7 +103,7 @@ class FaceClustering(Task):
             },
             inputs=facedetector_result[0],
             outputs=["images", "kpss", "faces", "bboxes"],
-            downloads=["images", "faces"],
+            downloads=["images", "faces", "bboxes", "kpss"],
         )
 
         if plugin_run is not None:
@@ -288,6 +288,12 @@ class FaceClustering(Task):
                     plugin_run_result_images_db.id.hex,
                     plugin_run_result_features_db.id.hex,
                 ]
+                for name, result_type in (("bboxes", PluginRunResult.TYPE_BBOXES), ("kpss", PluginRunResult.TYPE_KEYPOINTS)):
+                    spatial_result = PluginRunResult.objects.create(
+                        plugin_run=plugin_run, name=name, type=result_type,
+                        data_id=face_size_filter_result[1][name].id,
+                    )
+                    plugin_run_results.append(spatial_result.id.hex)
 
         scalar_timelines = create_cluster_scalar_timelines(
             cluster_timeline_items,

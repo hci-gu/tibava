@@ -19,6 +19,7 @@ from ..utils.analyser_client import TaskAnalyserClient
 from data import Shot, ShotsData, DataManager
 from backend.utils.parser import Parser
 from backend.utils.task import Task
+from backend.utils.spatial_results import save_spatial_result
 
 from django.db import transaction
 from django.conf import settings
@@ -103,6 +104,7 @@ class DeepfaceEmotion(Task):
             },
             inputs={"video": video_id},
             outputs=["images", "faces"],
+            downloads=["bboxes"],
         )
 
         if plugin_run is not None:
@@ -117,7 +119,7 @@ class DeepfaceEmotion(Task):
             "deepface_emotion",
             inputs={**result[0]},
             outputs=["probs"],
-            downloads=["probs"],
+            downloads=["probs", "face_predictions"],
         )
 
         if plugin_run is not None:
@@ -146,6 +148,17 @@ class DeepfaceEmotion(Task):
             return {}
 
         with transaction.atomic():
+            with result[1]["bboxes"] as boxes, emotion_result[1]["face_predictions"] as predictions:
+                by_face = {box.ref_id: box for box in boxes.bboxes}
+                records = []
+                for annotation in predictions.annotations:
+                    for prediction in annotation.labels:
+                        box = by_face.get(prediction["face_id"])
+                        if box is not None:
+                            records.append({**prediction, "time": annotation.start,
+                                            "delta_time": annotation.end - annotation.start,
+                                            "bbox": [box.x, box.y, box.w, box.h], "confidence": box.det_score})
+                spatial = save_spatial_result(plugin_run, "face_expressions", records, manager)
             with aggregate_result[1]["aggregated_scalars"] as data:
 
                 timeline_dict = {}
@@ -201,7 +214,7 @@ class DeepfaceEmotion(Task):
                 data.extract_all(manager)
                 data_list = {}
 
-                plugin_run_results = []
+                plugin_run_results = [spatial.id.hex]
 
                 for index, sub_data in zip(data.index, data.data):
 

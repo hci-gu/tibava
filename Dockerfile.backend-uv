@@ -1,0 +1,8 @@
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+
+# FFmpeg/libass and a predictable Unicode font for visualization exports.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ffmpeg fonts-dejavu-core imagemagick libmagickwand-6.q16-6 \
+    libgl1 libglib2.0-0 libgomp1 \
+  && rm -rf /var/lib/apt/lists/*

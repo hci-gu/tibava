@@ -17,7 +17,7 @@ from backend.plugin_manager import PluginManager
 from ..utils.analyser_client import TaskAnalyserClient
 from data import Shot, ShotsData, DataManager
 from backend.utils.parser import Parser
-from backend.utils.task import Task
+from backend.utils.task import Task, PluginRunFailed
 from django.db import transaction
 from django.conf import settings
 
@@ -28,7 +28,7 @@ class ActiveSpeakerDetectionParser(Parser):
         self.valid_parameter = {
             "timeline": {"parser": str, "default": "Active Speaker Detection"},
             "shot_timeline_id": {"default": None},
-            "fps": {"parser": float, "default": 2.0},
+            "fps": {"parser": float, "default": 25.0},
         }
 
 
@@ -53,6 +53,12 @@ class ActiveSpeakerDetection(Task):
         # Debug
         # parameters["fps"] = 0.05
 
+        if parameters.get("fps", 25) != 25:
+            raise PluginRunFailed("active_speaker_requires_25_fps")
+        shot_timeline = Timeline.objects.filter(video=video, id=parameters["shot_timeline_id"]).first() if parameters.get("shot_timeline_id") else Timeline.objects.filter(
+            video=video, plugin_run_result__type=PluginRunResult.TYPE_SHOTS).first()
+        if shot_timeline is None:
+            raise PluginRunFailed("shot_timeline_required")
         manager = DataManager(self.config["output_path"])
         client = TaskAnalyserClient(
             host=self.config["analyser_host"],
@@ -76,9 +82,9 @@ class ActiveSpeakerDetection(Task):
         with shots:
             shots.shots.append(Shot(start=0, end=video.duration))
 
-        if parameters.get("shot_timeline_id"):
+        if shot_timeline:
             shot_timeline_segments = TimelineSegment.objects.filter(
-                timeline__id=parameters.get("shot_timeline_id")
+                timeline=shot_timeline
             )
             with shots:
                 shots.shots.clear()
@@ -140,11 +146,14 @@ class ActiveSpeakerDetection(Task):
 
         with transaction.atomic():
             with result[1]["speaker_tracks"] as track_data:
-                logging.info(f"{track_data=}")
+                spatial = PluginRunResult.objects.create(
+                    plugin_run=plugin_run, name="speaker_tracks", type=PluginRunResult.TYPE_SPATIAL,
+                    data_id=track_data.id,
+                )
 
                 return {
                     "plugin_run": plugin_run.id.hex,
-                    "plugin_run_results": [],
+                    "plugin_run_results": [spatial.id.hex],
                     "timelines": {},
                     "data": {"speaker_tracks": result[1]["speaker_tracks"].id},
                 }

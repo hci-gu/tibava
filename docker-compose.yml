@@ -103,7 +103,10 @@ services:
       - "127.0.0.1:6380:6380"
 
   celery:
-    image: ghcr.io/astral-sh/uv:debian
+    image: tibava-backend-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.backend-uv
 
     volumes:
       - type: bind
@@ -153,7 +156,10 @@ services:
     command: uv run --locked --package backend celery -A tibava worker -l INFO
 
   backend:
-    image: ghcr.io/astral-sh/uv:debian
+    image: tibava-backend-uv:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.backend-uv
     ports:
       - "127.0.0.1:8000:8000"
 

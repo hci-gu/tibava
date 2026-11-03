@@ -1,6 +1,7 @@
 from .video import *
 from .video_batch import *
 from .video_export import *
+from .video_visualization import *
 from .timeline import *
 from .timeline_import import *
 from .plugin import *

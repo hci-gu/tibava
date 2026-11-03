@@ -4,6 +4,24 @@ http_options:
   port: 8000
 
 applications:
+  - name: body_pose
+    route_prefix: /body_pose
+    import_path: inference_ray.main:app_builder
+    args:
+      model: body_pose
+      data_path: /data
+      params:
+        model_device: cuda
+    deployments:
+      - name: Deployment
+        autoscaling_config:
+          min_replicas: 0
+        ray_actor_options:
+          num_cpus: 2
+          runtime_env:
+            pip:
+              - torch==2.11.0
+              - torchvision==0.26.0
   - name: video_to_audio
     route_prefix: /video_to_audio
     import_path: inference_ray.main:app_builder

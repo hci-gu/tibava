@@ -36,7 +36,8 @@ class StringData(Data):
         )
 
     def to_dict(self) -> dict:
-        return {"text": self.text}
+        # Nested StringsData must retain IDs, including the box reference for OCR.
+        return {**super().to_dict(), "text": self.text}
 
 
 @DataManager.export("StringsData", analyser_pb2.TEXT_EMBEDDING_DATA)

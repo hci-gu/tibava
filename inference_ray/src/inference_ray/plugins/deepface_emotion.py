@@ -1,5 +1,5 @@
 from inference_ray.plugin import AnalyserPlugin, AnalyserPluginManager
-from data import ListData, ScalarData, ImagesData
+from data import ListData, ScalarData, ImagesData, AnnotationData, Annotation
 
 # from inference import InferenceServer
 from data import DataManager, Data
@@ -26,6 +26,7 @@ requires = {"images": ImagesData}
 
 provides = {
     "probs": ListData,
+    "face_predictions": AnnotationData,
 }
 
 
@@ -34,7 +35,7 @@ class DeepfaceEmotion(
     AnalyserPlugin,
     config=default_config,
     parameters=default_parameters,
-    version="0.1",
+    version="0.2",
     requires=requires,
     provides=provides,
 ):
@@ -46,7 +47,7 @@ class DeepfaceEmotion(
 
         self.grayscale = self.config.get("grayscale")
         self.target_size = self.config.get("target_size")
-        self.model_path = self.config.get("model_path")
+        self.model_path = self.config.get("model_path") or self.config.get("model_file")
         self.model = None
 
     def preprocess(self, img):
@@ -131,10 +132,13 @@ class DeepfaceEmotion(
         with (
             inputs["images"] as input_data,
             data_manager.create_data("ListData") as output_data,
+            data_manager.create_data("AnnotationData") as face_predictions,
         ):
             time = []
             ref_ids = []
             predictions = []
+            delta_time = 0.5
+            expression_names = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
 
             faceid_lut = {}
             faceimages = input_data
@@ -153,6 +157,10 @@ class DeepfaceEmotion(
                 ref_ids.append(face_id)
                 predictions.append(prediction.tolist())
                 delta_time = entry.delta_time  # same for all examples
+                face_predictions.annotations.append(Annotation(
+                    start=entry.time, end=entry.time + entry.delta_time,
+                    labels=[{"face_id": face_id, "scores": dict(zip(expression_names, prediction.tolist()))}],
+                ))
 
             self.update_callbacks(callbacks, progress=1.0)
 
@@ -172,4 +180,4 @@ class DeepfaceEmotion(
                     data.delta_time = delta_time
                     data.ref_id = ref_ids
 
-            return {"probs": output_data}
+            return {"probs": output_data, "face_predictions": face_predictions}

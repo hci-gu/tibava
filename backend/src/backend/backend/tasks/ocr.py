@@ -20,6 +20,7 @@ from backend.plugin_manager import PluginManager
 from ..utils.analyser_client import TaskAnalyserClient
 from backend.utils.parser import Parser
 from backend.utils.task import Task
+from backend.utils.spatial_results import save_spatial_result
 from django.db import transaction
 
 from django.conf import settings
@@ -75,13 +76,21 @@ class OCRTask(Task):
                 "fps": parameters.get("fps"),
             },
             inputs={"video": video_id},
-            downloads=["annotations"],
+            downloads=["annotations", "bboxes", "strings"],
         )
 
         if video_text_detection_result is None:
             raise Exception
 
         with transaction.atomic():
+            with video_text_detection_result[1]["bboxes"] as boxes, video_text_detection_result[1]["strings"] as strings:
+                text_by_box = {text.ref_id: text.text for text in strings.strings}
+                spatial = save_spatial_result(plugin_run, "ocr_boxes", [
+                    {"time": box.time, "delta_time": box.delta_time,
+                     "bbox": [box.x, box.y, box.w, box.h], "label": text_by_box.get(box.id, ""),
+                     "detection_id": box.id}
+                    for box in boxes.bboxes
+                ], manager)
             with video_text_detection_result[1]["annotations"] as data:
                 """
                 Create a timeline labeled
@@ -90,6 +99,7 @@ class OCRTask(Task):
                     video=video,
                     name=parameters.get("timeline"),
                     type=Timeline.TYPE_ANNOTATION,
+                    plugin_run_result=spatial,
                 )
 
                 category_db, _ = AnnotationCategory.objects.get_or_create(
@@ -118,7 +128,7 @@ class OCRTask(Task):
 
                 return {
                     "plugin_run": plugin_run.id.hex,
-                    "plugin_run_results": [],
+                    "plugin_run_results": [spatial.id.hex],
                     "timelines": {"annotations": annotation_timeline_db},
                     "data": {
                         "annotations": video_text_detection_result[1]["annotations"].id

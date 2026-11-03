@@ -33,7 +33,7 @@ default_parameters = {
 requires = {
     "video": VideoData,
     "audio": AudioData,
-    "face_tracks": FacesData,
+    "face_tracks": AnnotationData,
 }
 
 provides = {  # TODO maybe needs to be adjusted for display
@@ -46,7 +46,7 @@ class ActiveSpeakerDetection(
     AnalyserPlugin,
     config=default_config,
     parameters=default_parameters,
-    version="0.1",
+    version="0.2",
     requires=requires,
     provides=provides,
 ):
@@ -89,6 +89,8 @@ class ActiveSpeakerDetection(
         import python_speech_features
         import cv2
 
+        if parameters.get("fps") != 25:
+            raise ValueError("Active speaker model requires 25 fps for 100 Hz audio alignment")
         self.preload()
         model = self.model
 
@@ -118,12 +120,10 @@ class ActiveSpeakerDetection(
 
                 for track in face_tracks.annotations:
                     track_data = track.labels[0]
-                    start_idx = int(
-                        track.start / video_decoder.duration() * len(audio_array)
-                    )
-                    end_idx = int(
-                        track.end / video_decoder.duration() * len(audio_array)
-                    )
+                    start_idx = int(round(track.start * parameters["sampling_rate"]))
+                    end_idx = min(len(audio_array), int(round(track.end * parameters["sampling_rate"])))
+                    if end_idx <= start_idx:
+                        continue
                     audioFeature = python_speech_features.mfcc(
                         audio_array[start_idx:end_idx],
                         parameters.get("sampling_rate"),
@@ -133,7 +133,7 @@ class ActiveSpeakerDetection(
                     )
                     face_video_frames = self.crop_face(
                         video_frames[
-                            track_data["frames"][0] : track_data["frames"][-1]
+                            track_data["frames"][0] : track_data["frames"][-1] + 1
                         ],
                         np.array(track_data["bboxes"]),
                         parameters["crop_scale"],
@@ -152,10 +152,10 @@ class ActiveSpeakerDetection(
 
                     length = min(
                         (audioFeature.shape[0] - audioFeature.shape[0] % 4) / 100,
-                        videoFeature.shape[0],
+                        videoFeature.shape[0] / fps,
                     )
 
-                    if audioFeature.size == 0 or videoFeature.size == 0:
+                    if audioFeature.size == 0 or videoFeature.size == 0 or length < 1 / fps:
                         logging.warning(
                             f"Skipping Track {track_data['track_id']} due to empty audio or video feature"
                         )
@@ -249,6 +249,10 @@ class ActiveSpeakerDetection(
                     allScore = np.round(
                         (np.mean(np.array(padded_scores), axis=0)), 1
                     ).astype(float)
+                    count = min(len(allScore), len(track_data["frames"]), len(videoFeature))
+                    allScore = allScore[:count]
+                    if not count:
+                        continue
 
                     smoothed_scores = []
                     for i in range(len(allScore)):
@@ -259,12 +263,14 @@ class ActiveSpeakerDetection(
                     speaking_ratio = speaking_frames / len(smoothed_scores)
                     annotation = Annotation(
                         start=track.start,
-                        end=track.end,
+                        end=(track_data["frames"][count - 1] + 1) / fps,
                         labels=[
                             {
                                 "track_id": track_data["track_id"],
-                                "frames": track_data["frames"],
-                                "bbox": track_data["bboxes"],
+                                "frames": track_data["frames"][:count],
+                                "times": [frame / fps for frame in track_data["frames"][:count]],
+                                "fps": fps,
+                                "bbox": track_data["bboxes"][:count],
                                 "is_speaking": speaking_ratio > 0.6,
                                 "speaking_ratio": speaking_ratio,
                                 "speaking_frames": speaking_frames,
